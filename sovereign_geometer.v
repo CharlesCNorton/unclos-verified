@@ -1319,25 +1319,396 @@ Proof.
   nra.
 Qed.
 
+(** ** Distance Zero Implies Point Equality (Constructive Proof)
+
+    We prove that distance(p, q) = 0 implies p = q for non-polar points.
+    The proof proceeds by showing:
+    1. distance = 0 implies asin(sqrt(a)) = 0
+    2. asin(x) = 0 implies x = 0 (for x in [-1, 1])
+    3. sqrt(x) = 0 implies x = 0 (for x ≥ 0)
+    4. a = 0 implies both hav(Δφ) = 0 and cos(φ₁)cos(φ₂)hav(Δλ) = 0
+    5. hav(θ) = 0 implies θ = 2kπ for integer k
+    6. For valid coordinates, this means Δφ = 0 and (at non-poles) Δλ = 0
+
+    IMPORTANT: At the poles (φ = ±π/2), longitude is degenerate - all
+    longitudes represent the same physical point. We handle this by
+    requiring that at least one point not be at a pole.                      *)
+
+(** Helper: asin(x) = 0 implies x = 0 for x in [-1, 1].
+    Proof: sin(asin(x)) = x, and if asin(x) = 0 then sin(0) = 0 = x.        *)
+
+Lemma asin_eq_0 : forall x, -1 <= x <= 1 -> asin x = 0 -> x = 0.
+Proof.
+  intros x Hbounds Hasin.
+  rewrite <- (sin_asin x Hbounds).
+  rewrite Hasin.
+  exact sin_0.
+Qed.
+
+(** Helper: sqrt(x) = 0 iff x = 0 for x ≥ 0.
+    Proof: sqrt(x)² = x, so sqrt(x) = 0 implies x = 0.                       *)
+
+Lemma sqrt_eq_0 : forall x, 0 <= x -> sqrt x = 0 -> x = 0.
+Proof.
+  intros x Hx Hsqrt.
+  rewrite <- (sqrt_sqrt x Hx).
+  rewrite Hsqrt.
+  ring.
+Qed.
+
+(** Helper: If sqrt(x) = 0, then x = 0 (with non-negativity derived). *)
+
+Lemma sqrt_eq_0_alt : forall x, 0 <= x -> sqrt x = 0 <-> x = 0.
+Proof.
+  intros x Hx. split.
+  - apply sqrt_eq_0. exact Hx.
+  - intro H. subst x. exact sqrt_0.
+Qed.
+
+(** Helper: hav(θ) = 0 iff sin(θ/2) = 0.
+    Since hav(θ) = sin²(θ/2), hav(θ) = 0 iff sin(θ/2) = 0.                  *)
+
+Lemma hav_eq_0_iff : forall theta, hav theta = 0 <-> sin (theta / 2) = 0.
+Proof.
+  intros theta. unfold hav, Rsqr. split.
+  - intro H.
+    assert (Hsq : sin (theta / 2) * sin (theta / 2) >= 0).
+    { apply Rle_ge. apply Rle_0_sqr. }
+    destruct (Rtotal_order (sin (theta / 2)) 0) as [Hneg | [Hzero | Hpos]].
+    + assert (Hcontra : sin (theta / 2) * sin (theta / 2) > 0) by nra.
+      lra.
+    + exact Hzero.
+    + assert (Hcontra : sin (theta / 2) * sin (theta / 2) > 0) by nra.
+      lra.
+  - intro H. rewrite H. ring.
+Qed.
+
+(** Helper: sin(x) = 0 and x ∈ (-π, π) implies x = 0.
+    In the open interval (-π, π), sin has a unique zero at 0.               *)
+
+Lemma sin_eq_0_in_interval : forall x,
+  -PI < x < PI -> sin x = 0 -> x = 0.
+Proof.
+  intros x [Hlo Hhi] Hsin.
+  destruct (Rtotal_order x 0) as [Hneg | [Hzero | Hpos]].
+  - exfalso.
+    assert (Hsin_neg : sin x < 0).
+    { apply sin_lt_0_var; lra. }
+    lra.
+  - exact Hzero.
+  - exfalso.
+    assert (Hsin_pos : sin x > 0).
+    { apply sin_gt_0; lra. }
+    lra.
+Qed.
+
+(** Helper: sin(x) = 0 and x ∈ [-π, π] implies x = 0 or x = π or x = -π.
+    We use this for the boundary case.                                      *)
+
+Lemma sin_eq_0_in_closed_interval : forall x,
+  -PI <= x <= PI -> sin x = 0 -> x = 0 \/ x = PI \/ x = -PI.
+Proof.
+  intros x [Hlo Hhi] Hsin.
+  destruct (Req_dec x PI) as [HeqPI | HneqPI].
+  - right. left. exact HeqPI.
+  - destruct (Req_dec x (-PI)) as [HeqNegPI | HneqNegPI].
+    + right. right. exact HeqNegPI.
+    + left. apply sin_eq_0_in_interval.
+      * split; lra.
+      * exact Hsin.
+Qed.
+
+(** Helper: For valid latitude difference, hav(Δφ) = 0 implies Δφ = 0.
+
+    If φ₁, φ₂ ∈ [-π/2, π/2], then Δφ = φ₂ - φ₁ ∈ [-π, π].
+    hav(Δφ) = 0 implies sin(Δφ/2) = 0.
+    Since Δφ/2 ∈ [-π/2, π/2] and sin is zero only at 0 in this interval,
+    we have Δφ/2 = 0, hence Δφ = 0.                                         *)
+
+Lemma hav_dphi_eq_0 : forall phi1 phi2,
+  -PI/2 <= phi1 <= PI/2 ->
+  -PI/2 <= phi2 <= PI/2 ->
+  hav (phi2 - phi1) = 0 ->
+  phi1 = phi2.
+Proof.
+  intros phi1 phi2 [Hlo1 Hhi1] [Hlo2 Hhi2] Hhav.
+  apply hav_eq_0_iff in Hhav.
+  set (dphi := phi2 - phi1) in *.
+  assert (Hpi_pos : PI > 0) by exact PI_RGT_0.
+  assert (Hdphi_bounds : -PI <= dphi <= PI) by (unfold dphi; lra).
+  assert (Hdphi_half_bounds : -PI/2 <= dphi/2 <= PI/2) by lra.
+  assert (Hdphi_half_strict : -PI < dphi/2 < PI) by lra.
+  assert (Hdphi_half_zero : dphi / 2 = 0).
+  { apply sin_eq_0_in_interval.
+    - exact Hdphi_half_strict.
+    - exact Hhav. }
+  assert (Hdphi_zero : dphi = 0) by lra.
+  unfold dphi in Hdphi_zero.
+  lra.
+Qed.
+
+(** Helper: For valid longitude difference with non-polar points,
+    cos(φ₁)cos(φ₂)hav(Δλ) = 0 and cos(φ₁) ≠ 0 and cos(φ₂) ≠ 0
+    implies hav(Δλ) = 0.                                                    *)
+
+Lemma cos_cos_hav_eq_0 : forall phi1 phi2 dlambda,
+  cos phi1 <> 0 ->
+  cos phi2 <> 0 ->
+  cos phi1 * cos phi2 * hav dlambda = 0 ->
+  hav dlambda = 0.
+Proof.
+  intros phi1 phi2 dlambda Hcos1 Hcos2 Hprod.
+  assert (Hhav_nonneg : hav dlambda >= 0) by (apply Rle_ge; apply hav_nonneg).
+  destruct (Req_dec (hav dlambda) 0) as [Hzero | Hnonzero].
+  - exact Hzero.
+  - exfalso.
+    assert (Hprod_nonzero : cos phi1 * cos phi2 * hav dlambda <> 0).
+    { apply Rmult_integral_contrapositive_currified.
+      - apply Rmult_integral_contrapositive_currified; assumption.
+      - exact Hnonzero. }
+    lra.
+Qed.
+
+(** Helper: For valid longitude difference, hav(Δλ) = 0 implies Δλ = 0
+    (when Δλ is in the valid range (-2π, 2π)).
+
+    If λ₁, λ₂ ∈ (-π, π], then Δλ = λ₂ - λ₁ ∈ (-2π, 2π).
+    hav(Δλ) = 0 implies sin(Δλ/2) = 0.
+    Since Δλ/2 ∈ (-π, π) and sin is zero only at 0 in this interval,
+    we have Δλ/2 = 0, hence Δλ = 0.                                         *)
+
+Lemma hav_dlambda_eq_0 : forall lambda1 lambda2,
+  -PI < lambda1 <= PI ->
+  -PI < lambda2 <= PI ->
+  hav (lambda2 - lambda1) = 0 ->
+  lambda1 = lambda2.
+Proof.
+  intros lambda1 lambda2 [Hlo1 Hhi1] [Hlo2 Hhi2] Hhav.
+  apply hav_eq_0_iff in Hhav.
+  set (dlambda := lambda2 - lambda1) in *.
+  assert (Hdlambda_bounds : -2*PI < dlambda < 2*PI) by (unfold dlambda; lra).
+  assert (Hdlambda_half_bounds : -PI < dlambda/2 < PI) by lra.
+  assert (Hdlambda_half_zero : dlambda / 2 = 0).
+  { apply sin_eq_0_in_interval.
+    - exact Hdlambda_half_bounds.
+    - exact Hhav. }
+  assert (Hdlambda_zero : dlambda = 0) by lra.
+  unfold dlambda in Hdlambda_zero.
+  lra.
+Qed.
+
+(** Helper: cos(φ) ≠ 0 iff φ ≠ ±π/2 (for φ in valid latitude range).
+    At the poles, cos(±π/2) = 0. Elsewhere cos(φ) > 0 for φ ∈ (-π/2, π/2). *)
+
+Lemma cos_phi_nonzero_iff : forall phi,
+  -PI/2 <= phi <= PI/2 ->
+  cos phi <> 0 <-> (phi <> PI/2 /\ phi <> -PI/2).
+Proof.
+  intros phi [Hlo Hhi].
+  split.
+  - intro Hcos.
+    split.
+    + intro Heq. subst phi. rewrite cos_PI2 in Hcos. lra.
+    + intro Heq. subst phi.
+      assert (Heq2 : -PI/2 = -(PI/2)) by lra.
+      rewrite Heq2, cos_neg, cos_PI2 in Hcos. lra.
+  - intros [Hne1 Hne2].
+    assert (Hstrict : -PI/2 < phi < PI/2) by lra.
+    assert (Hpos : cos phi > 0) by (apply cos_gt_0; lra).
+    lra.
+Qed.
+
+(** Helper: For valid latitudes not at poles, cos is positive. *)
+
+Lemma cos_phi_pos : forall phi,
+  -PI/2 < phi < PI/2 -> cos phi > 0.
+Proof.
+  intros phi [Hlo Hhi].
+  apply cos_gt_0; lra.
+Qed.
+
+(** Predicate: a point is NOT at a pole (latitude ≠ ±π/2). *)
+
+Definition not_at_pole (p : Point) : Prop :=
+  phi p <> PI/2 /\ phi p <> -PI/2.
+
+(** For valid non-polar points, cos(φ) > 0. *)
+
+Lemma valid_nonpolar_cos_pos : forall p,
+  valid_point p -> not_at_pole p -> cos (phi p) > 0.
+Proof.
+  intros p [Hphi _] [Hne1 Hne2].
+  apply cos_phi_pos. lra.
+Qed.
+
+(** LEMMA: The haversine argument being zero implies coordinate equality
+    for non-polar valid points.
+
+    This is the key step: if a = hav(Δφ) + cos(φ₁)cos(φ₂)hav(Δλ) = 0,
+    then φ₁ = φ₂ and λ₁ = λ₂ (for non-polar points).                       *)
+
+Lemma hav_arg_zero_implies_eq : forall p q,
+  valid_point p -> valid_point q ->
+  not_at_pole p ->
+  let dphi := phi q - phi p in
+  let dlambda := lambda q - lambda p in
+  hav dphi + cos (phi p) * cos (phi q) * hav dlambda = 0 ->
+  phi p = phi q /\ lambda p = lambda q.
+Proof.
+  intros p q Hp Hq Hnp dphi dlambda Hsum.
+  destruct Hp as [[Hphi_lo Hphi_hi] [Hlam_lo Hlam_hi]].
+  destruct Hq as [[Hqphi_lo Hqphi_hi] [Hqlam_lo Hqlam_hi]].
+  destruct Hnp as [Hne1 Hne2].
+  assert (Hcos_p_pos : cos (phi p) > 0) by (apply cos_phi_pos; lra).
+  assert (Hcos_p_nonneg : cos (phi p) >= 0) by lra.
+  assert (Hcos_q_nonneg : cos (phi q) >= 0).
+  { apply Rle_ge. apply cos_ge_0; lra. }
+  assert (Hhav_dphi_nonneg : hav dphi >= 0) by (apply Rle_ge; apply hav_nonneg).
+  assert (Hhav_dlam_nonneg : hav dlambda >= 0) by (apply Rle_ge; apply hav_nonneg).
+  assert (Hcos_prod_nonneg : cos (phi p) * cos (phi q) >= 0).
+  { apply Rle_ge. apply Rmult_le_pos; apply Rge_le; assumption. }
+  assert (Hprod_nonneg : cos (phi p) * cos (phi q) * hav dlambda >= 0).
+  { apply Rle_ge. apply Rmult_le_pos.
+    - apply Rge_le. exact Hcos_prod_nonneg.
+    - apply Rge_le. exact Hhav_dlam_nonneg. }
+  assert (Hboth_zero : hav dphi = 0 /\ cos (phi p) * cos (phi q) * hav dlambda = 0).
+  { assert (H1 : hav dphi >= 0) by exact Hhav_dphi_nonneg.
+    assert (H2 : cos (phi p) * cos (phi q) * hav dlambda >= 0) by exact Hprod_nonneg.
+    assert (H3 : hav dphi + cos (phi p) * cos (phi q) * hav dlambda = 0) by exact Hsum.
+    split; lra. }
+  destruct Hboth_zero as [Hhav_dphi_zero Hprod_zero].
+  split.
+  - apply hav_dphi_eq_0; try lra; exact Hhav_dphi_zero.
+  - assert (Hphi_eq : phi p = phi q) by (apply hav_dphi_eq_0; try lra; exact Hhav_dphi_zero).
+    rewrite Hphi_eq in Hprod_zero.
+    assert (Hcos_q_pos : cos (phi q) > 0).
+    { rewrite <- Hphi_eq. exact Hcos_p_pos. }
+    assert (Hcos_q_ne : cos (phi q) <> 0) by lra.
+    assert (Hcos_p_ne : cos (phi p) <> 0) by lra.
+    rewrite Hphi_eq in Hcos_p_ne.
+    assert (Hhav_dlam_zero : hav dlambda = 0).
+    { apply cos_cos_hav_eq_0 with (phi1 := phi q) (phi2 := phi q).
+      - exact Hcos_q_ne.
+      - exact Hcos_q_ne.
+      - exact Hprod_zero. }
+    apply hav_dlambda_eq_0; try lra; exact Hhav_dlam_zero.
+Qed.
+
+(** LEMMA: distance(p, q) = 0 implies the haversine argument a = 0.
+
+    Chain: distance = 0 → 2·R·asin(√a) = 0 → asin(√a) = 0 → √a = 0 → a = 0 *)
+
+Lemma distance_zero_implies_hav_arg_zero : forall p q,
+  distance p q = 0 ->
+  hav (phi q - phi p) + cos (phi p) * cos (phi q) * hav (lambda q - lambda p) = 0.
+Proof.
+  intros p q Hdist.
+  unfold distance in Hdist.
+  set (dphi := phi q - phi p) in *.
+  set (dlambda := lambda q - lambda p) in *.
+  set (a := hav dphi + cos (phi p) * cos (phi q) * hav dlambda) in *.
+  assert (HR_pos : R_earth > 0) by exact R_earth_pos.
+  assert (H2R_pos : 2 * R_earth > 0) by lra.
+  assert (Hasin_zero : asin (sqrt a) = 0).
+  { assert (Hprod : 2 * R_earth * asin (sqrt a) = 0) by exact Hdist.
+    destruct (Rmult_integral _ _ Hprod) as [H2R_zero | Hasin].
+    - destruct (Rmult_integral _ _ H2R_zero) as [H2_zero | HR_zero].
+      + lra.
+      + unfold R_earth in HR_zero. lra.
+    - exact Hasin. }
+  assert (Ha_nonneg : 0 <= a).
+  { unfold a. apply Rge_le. apply Rle_ge.
+    pose proof (hav_arg_nonneg p q) as H.
+    unfold dphi, dlambda in H. exact H. }
+  assert (Ha_le_1 : a <= 1).
+  { unfold a. pose proof (hav_arg_le_1 p q) as H.
+    unfold dphi, dlambda in H. exact H. }
+  assert (Hsqrt_bounds : 0 <= sqrt a <= 1).
+  { split.
+    - apply sqrt_pos.
+    - rewrite <- sqrt_1. apply sqrt_le_1_alt. exact Ha_le_1. }
+  assert (Hsqrt_zero : sqrt a = 0).
+  { apply asin_eq_0.
+    - lra.
+    - exact Hasin_zero. }
+  assert (Ha_zero : a = 0).
+  { apply sqrt_eq_0; assumption. }
+  unfold a, dphi, dlambda in Ha_zero.
+  exact Ha_zero.
+Qed.
+
+(** LEMMA: Point equality from coordinate equality. *)
+
+Lemma point_eq_from_coords : forall p q,
+  phi p = phi q -> lambda p = lambda q -> p = q.
+Proof.
+  intros p q Hphi Hlam.
+  destruct p as [phi_p lam_p].
+  destruct q as [phi_q lam_q].
+  simpl in *.
+  subst. reflexivity.
+Qed.
+
+(** THEOREM: Distance zero implies point equality (for non-polar valid points).
+
+    This replaces the axiom with a constructive proof. The requirement that
+    the point not be at a pole is necessary due to coordinate singularity:
+    at φ = ±π/2, all longitudes represent the same physical location, but
+    have different coordinate representations.
+
+    For maritime applications, no baseline passes through the exact poles,
+    so this restriction is immaterial.                                       *)
+
+Theorem distance_zero_implies_eq : forall p q,
+  valid_point p -> valid_point q ->
+  not_at_pole p ->
+  distance p q = 0 -> p = q.
+Proof.
+  intros p q Hp Hq Hnp Hdist.
+  apply distance_zero_implies_hav_arg_zero in Hdist.
+  pose proof (hav_arg_zero_implies_eq p q Hp Hq Hnp Hdist) as [Hphi Hlam].
+  apply point_eq_from_coords; assumption.
+Qed.
+
+(** COROLLARY: For points where cos(φ) > 0 (strictly non-polar). *)
+
+Corollary distance_zero_implies_eq_cos : forall p q,
+  valid_point p -> valid_point q ->
+  cos (phi p) > 0 ->
+  distance p q = 0 -> p = q.
+Proof.
+  intros p q Hp Hq Hcos Hdist.
+  apply distance_zero_implies_eq; try assumption.
+  destruct Hp as [[Hlo Hhi] _].
+  unfold not_at_pole. split.
+  - intro Heq. rewrite Heq in Hcos. rewrite cos_PI2 in Hcos. lra.
+  - intro Heq. rewrite Heq in Hcos.
+    assert (Heq2 : -PI/2 = -(PI/2)) by lra.
+    rewrite Heq2, cos_neg, cos_PI2 in Hcos. lra.
+Qed.
+
+(** For the theorem baseline_point_not_equidistant, we provide a version
+    that explicitly handles the non-polar requirement.                       *)
+
 (** THEOREM: Points on either baseline are NOT on the equidistance line
     (except in degenerate cases where baselines intersect).
 
     If p is on b1 but not on b2, then p is closer to b1 than to b2.
     This is stated as: if we have a witness point on b2 at positive distance,
-    then the point cannot be equidistant.                                    *)
+    then the point cannot be equidistant.
 
-(** Distance zero implies the points are the same (modulo coordinate wrapping).
-    We axiomatize this property of our distance function.                   *)
-
-Axiom distance_zero_eq : forall p q, distance p q = 0 -> p = q.
+    REQUIREMENT: The point p must be valid and not at a pole.               *)
 
 Theorem baseline_point_not_equidistant : forall b1 b2 p,
+  valid_point p ->
+  not_at_pole p ->
+  (forall q, contains b2 q -> valid_point q) ->
   contains b1 p ->
   ~ contains b2 p ->
   (exists q, contains b2 q /\ distance p q > 0) ->
   ~ equidistant_from_baselines p b1 b2.
 Proof.
-  intros b1 b2 p Hb1 Hnb2 [q [Hq2 Hposq]] Heq.
+  intros b1 b2 p Hvp Hnp Hb2_valid Hb1 Hnb2 [q [Hq2 Hposq]] Heq.
   unfold equidistant_from_baselines in Heq.
   specialize (Heq 0 (Rle_refl 0)).
   unfold within_distance, buffer, contains in Heq.
@@ -1347,7 +1718,8 @@ Proof.
   destruct (Hfwd H1) as [q' [Hq'_in_b2 Hdist_q']].
   pose proof (distance_nonneg p q') as Hdist_nonneg.
   assert (Hzero : distance p q' = 0) by lra.
-  apply distance_zero_eq in Hzero.
+  assert (Hvq' : valid_point q') by (apply Hb2_valid; exact Hq'_in_b2).
+  apply distance_zero_implies_eq in Hzero; try assumption.
   subst q'.
   apply Hnb2. exact Hq'_in_b2.
 Qed.
