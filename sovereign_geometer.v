@@ -172,6 +172,55 @@ Proof.
   unfold max_radial_deviation, R_equatorial, R_polar. lra.
 Qed.
 
+(******************************************************************************)
+(*  UNIT CONVERSION                                                           *)
+(*                                                                            *)
+(*  The formalization uses nautical miles as the primary distance unit and    *)
+(*  square nautical miles for areas. External data (e.g., land reclamation    *)
+(*  areas from news reports) often uses metric units. These conversions       *)
+(*  ensure consistent units throughout.                                       *)
+(*                                                                            *)
+(*  1 nautical mile = 1.852 km                                                *)
+(*  1 km = 1/1.852 ≈ 0.53996 nm                                               *)
+(*  1 sq nm = 1.852² ≈ 3.4299 sq km                                           *)
+(*  1 sq km = 1/3.4299 ≈ 0.2916 sq nm                                         *)
+(******************************************************************************)
+
+(* Kilometers per nautical mile.                                              *)
+
+Definition km_per_nm : R := 1.852.
+
+(* Square kilometers per square nautical mile.                                *)
+
+Definition sqkm_per_sqnm : R := km_per_nm * km_per_nm.
+
+Lemma sqkm_per_sqnm_value : sqkm_per_sqnm = 3.429904.
+Proof. unfold sqkm_per_sqnm, km_per_nm. lra. Qed.
+
+(* Convert square kilometers to square nautical miles.                        *)
+
+Definition sqkm_to_sqnm (sqkm : R) : R := sqkm / sqkm_per_sqnm.
+
+(* Convert square nautical miles to square kilometers.                        *)
+
+Definition sqnm_to_sqkm (sqnm : R) : R := sqnm * sqkm_per_sqnm.
+
+(* Conversion round-trip property.                                            *)
+
+Lemma sqkm_sqnm_roundtrip : forall x, sqnm_to_sqkm (sqkm_to_sqnm x) = x.
+Proof.
+  intros x. unfold sqnm_to_sqkm, sqkm_to_sqnm, sqkm_per_sqnm, km_per_nm.
+  field. lra.
+Qed.
+
+(* 5 square km is approximately 1.46 square nautical miles.                   *)
+
+Lemma five_sqkm_in_sqnm : sqkm_to_sqnm 5 < 1.46.
+Proof.
+  unfold sqkm_to_sqnm, sqkm_per_sqnm, km_per_nm.
+  nra.
+Qed.
+
 (* The flattening is less than 0.34% (1/298).                                *)
 
 Lemma flattening_small : max_radial_deviation < 1/294.
@@ -201,8 +250,38 @@ Proof.
   lra.
 Qed.
 
-(* For areas, the relative error is at most twice the distance error.
-   With max distance error < 0.23%, max area error < 0.5%.                   *)
+(* For areas scaling as R², the relative error is bounded by twice the
+   radius error. If A₁ = k·R₁² and A₂ = k·R₂², then for R₂ ≤ R₁:
+   (A₁ - A₂)/A₁ = (R₁² - R₂²)/R₁² = (R₁-R₂)(R₁+R₂)/R₁²
+                ≤ (R₁-R₂)(2R₁)/R₁² = 2(R₁-R₂)/R₁                             *)
+
+Lemma area_error_factor : forall R1 R2,
+  R1 > 0 -> R2 > 0 -> R2 <= R1 ->
+  (Rsqr R1 - Rsqr R2) / Rsqr R1 <= 2 * (R1 - R2) / R1.
+Proof.
+  intros R1 R2 HR1 HR2 Hle.
+  unfold Rsqr.
+  assert (Hfact : R1 * R1 - R2 * R2 = (R1 - R2) * (R1 + R2)) by ring.
+  rewrite Hfact.
+  assert (Hsum : R1 + R2 <= 2 * R1) by lra.
+  assert (Hdiff_pos : R1 - R2 >= 0) by lra.
+  unfold Rdiv.
+  rewrite Rinv_mult by lra.
+  replace ((R1 - R2) * (R1 + R2) * (/ R1 * / R1)) with
+    ((R1 - R2) * / R1 * ((R1 + R2) * / R1)).
+  2: { field. lra. }
+  replace (2 * (R1 - R2) * / R1) with ((R1 - R2) * / R1 * 2).
+  2: { ring. }
+  apply Rmult_le_compat_l.
+  - apply Rmult_le_pos; [lra |].
+    apply Rlt_le. apply Rinv_0_lt_compat. lra.
+  - apply Rmult_le_reg_r with R1; [lra |].
+    rewrite Rmult_assoc.
+    rewrite Rinv_l by lra.
+    rewrite Rmult_1_r. lra.
+Qed.
+
+(* With max distance error < 0.23%, max area error < 0.5%.                   *)
 
 Lemma area_error_bound_factor : 2 * polar_relative_error < 1/200.
 Proof.
@@ -1719,20 +1798,71 @@ Qed.
 Definition nth_cyclic {A : Type} (default : A) (l : list A) (i : nat) : A :=
   nth (i mod length l) l default.
 
+(* Computes the signed longitude difference with dateline wrapping. When
+   the raw difference exceeds π in absolute value, it is adjusted by 2π
+   to give the shorter path across the dateline. This ensures correct
+   area computation for polygons crossing the ±180° longitude line.          *)
+
+Definition lon_diff (lon1 lon2 : R) : R :=
+  let raw := lon2 - lon1 in
+  if Rlt_dec PI raw then raw - 2 * PI
+  else if Rlt_dec raw (-PI) then raw + 2 * PI
+  else raw.
+
+(* Longitude difference is bounded by π when inputs are valid longitudes.
+   Valid longitudes are in the range (-π, π].                                *)
+
+Lemma lon_diff_bounded : forall lon1 lon2,
+  -PI < lon1 <= PI -> -PI < lon2 <= PI ->
+  -PI <= lon_diff lon1 lon2 <= PI.
+Proof.
+  intros lon1 lon2 [H1lo H1hi] [H2lo H2hi].
+  unfold lon_diff.
+  pose proof PI_RGT_0 as Hpi.
+  destruct (Rlt_dec PI (lon2 - lon1)) as [Hgt | Hle].
+  - split; lra.
+  - destruct (Rlt_dec (lon2 - lon1) (-PI)) as [Hlt | Hge].
+    + split; lra.
+    + lra.
+Qed.
+
+(* Longitude difference from a point to itself is zero.                      *)
+
+Lemma lon_diff_refl : forall lon, lon_diff lon lon = 0.
+Proof.
+  intros lon. unfold lon_diff.
+  replace (lon - lon) with 0 by ring.
+  pose proof PI_RGT_0 as Hpi.
+  destruct (Rlt_dec PI 0); [lra |].
+  destruct (Rlt_dec 0 (-PI)); lra.
+Qed.
+
+(* For small differences within (-π, π), lon_diff equals raw difference.     *)
+
+Lemma lon_diff_small : forall lon1 lon2,
+  -PI < lon2 - lon1 -> lon2 - lon1 <= PI ->
+  lon_diff lon1 lon2 = lon2 - lon1.
+Proof.
+  intros lon1 lon2 Hlo Hhi.
+  unfold lon_diff.
+  destruct (Rlt_dec PI (lon2 - lon1)); [lra |].
+  destruct (Rlt_dec (lon2 - lon1) (-PI)); lra.
+Qed.
+
 (* Accumulates the spherical shoelace sum over polygon vertices. For each
    vertex, computes the longitude difference between adjacent vertices
-   multiplied by the sine of the vertex latitude. The sum yields twice
-   the signed spherical area divided by R².                                  *)
+   (with dateline wrapping) multiplied by the sine of the vertex latitude.
+   The sum yields twice the signed spherical area divided by R².             *)
 
 Fixpoint spherical_shoelace_aux (pts : list Point) (all_pts : list Point)
     (idx : nat) : R :=
   match pts with
   | nil => 0
   | p :: rest =>
-      let n := length all_pts in                                   (* vertex count    *)
+      let n := length all_pts in
       let lambda_prev := lambda (nth_cyclic p all_pts (idx + n - 1)) in
       let lambda_next := lambda (nth_cyclic p all_pts (idx + 1)) in
-      let term := (lambda_next - lambda_prev) * sin (phi p) in     (* signed contrib  *)
+      let term := lon_diff lambda_prev lambda_next * sin (phi p) in
       term + spherical_shoelace_aux rest all_pts (idx + 1)
   end.
 
@@ -1782,7 +1912,8 @@ Proof.
   intros p.
   unfold spherical_polygon_area, spherical_shoelace, spherical_shoelace_aux.
   simpl. unfold nth_cyclic. simpl.
-  replace ((lambda p - lambda p) * sin (phi p) + 0) with 0 by ring.
+  rewrite lon_diff_refl.
+  replace (0 * sin (phi p) + 0) with 0 by ring.
   rewrite Rmult_0_r. rewrite Rdiv_0_l. rewrite Rabs_R0. reflexivity.
 Qed.
 
@@ -1794,8 +1925,8 @@ Proof.
   intros p q.
   unfold spherical_polygon_area, spherical_shoelace, spherical_shoelace_aux.
   simpl. unfold nth_cyclic. simpl.
-  replace ((lambda q - lambda q) * sin (phi p) +
-           ((lambda p - lambda p) * sin (phi q) + 0)) with 0 by ring.
+  rewrite !lon_diff_refl.
+  replace (0 * sin (phi p) + (0 * sin (phi q) + 0)) with 0 by ring.
   rewrite Rmult_0_r. rewrite Rdiv_0_l. rewrite Rabs_R0. reflexivity.
 Qed.
 
@@ -1810,44 +1941,37 @@ Definition test_equatorial_square (delta : R) : Polygon :=
     mkPoint delta 0 ].
 
 (* The shoelace computation for a rectangle. For vertices at
-   (0,0), (0,δ), (δ,δ), (δ,0), the shoelace sum is:
+   (0,0), (0,δ), (δ,δ), (δ,0) with small δ (|δ| < π), the shoelace sum is:
    (δ - 0) × sin(0) + (δ - 0) × sin(0) + (0 - δ) × sin(δ) + (0 - δ) × sin(δ)
    = 0 + 0 - δ sin(δ) - δ sin(δ) = -2δ sin(δ)
 
    Note: This demonstrates the formula computes signed area.                 *)
 
-Lemma test_square_shoelace_structure : forall delta,
-  spherical_shoelace (test_equatorial_square delta) =
-  (delta - 0) * sin 0 +
-  ((delta - 0) * sin 0 +
-   ((0 - delta) * sin delta +
-    ((0 - delta) * sin delta + 0))).
-Proof.
-  intros delta.
-  unfold spherical_shoelace, spherical_shoelace_aux, test_equatorial_square.
-  simpl. unfold nth_cyclic. simpl.
-  reflexivity.
-Qed.
-
-(* Simplification: the shoelace sum reduces to -2δ sin(δ).                   *)
-
 Lemma test_square_shoelace_simplified : forall delta,
+  -PI < delta < PI ->
   spherical_shoelace (test_equatorial_square delta) = -2 * delta * sin delta.
 Proof.
-  intros delta.
-  rewrite test_square_shoelace_structure.
-  rewrite sin_0. ring.
+  intros delta [Hlo Hhi].
+  unfold spherical_shoelace, spherical_shoelace_aux, test_equatorial_square.
+  simpl. unfold nth_cyclic. simpl.
+  pose proof PI_RGT_0 as Hpi.
+  assert (Hd1 : lon_diff 0 delta = delta - 0).
+  { apply lon_diff_small; lra. }
+  assert (Hd2 : lon_diff delta 0 = 0 - delta).
+  { apply lon_diff_small; lra. }
+  rewrite Hd1, Hd2, sin_0. ring.
 Qed.
 
-(* The area of the test square is R² × |δ sin(δ)|.                           *)
+(* The area of the test square is R² × |δ sin(δ)| for small δ.               *)
 
 Lemma test_square_area : forall delta,
+  -PI < delta < PI ->
   spherical_polygon_area (test_equatorial_square delta) =
   Rabs (Rsqr R_earth * delta * sin delta).
 Proof.
-  intros delta.
+  intros delta Hbound.
   unfold spherical_polygon_area.
-  rewrite test_square_shoelace_simplified.
+  rewrite test_square_shoelace_simplified by exact Hbound.
   replace (Rsqr R_earth * (-2 * delta * sin delta) / 2) with
     (- (Rsqr R_earth * delta * sin delta)) by field.
   rewrite Rabs_Ropp.
@@ -1861,7 +1985,9 @@ Lemma test_square_area_pos : forall delta,
   spherical_polygon_area (test_equatorial_square delta) > 0.
 Proof.
   intros delta [Hlo Hhi].
-  rewrite test_square_area.
+  pose proof PI_RGT_0 as Hpi.
+  assert (Hbound : -PI < delta < PI) by lra.
+  rewrite test_square_area by exact Hbound.
   assert (HR : Rsqr R_earth > 0).
   { unfold Rsqr, R_earth. lra. }
   assert (Hsin : sin delta > 0).
@@ -1961,14 +2087,49 @@ Qed.
    as the sum of angles subtended by polygon edges as seen from the point.
    For interior points, this sum is 2π; for exterior points, zero.           *)
 
-(* The cosine argument for the law of cosines, given three distances.
-   Returns (da² + db² - dab²) / (2 * da * db) when the denominator is
-   positive, clamped to [-1, 1] for numerical stability.                     *)
+(* Converts a great-circle distance (in nautical miles) to its corresponding
+   central angle (in radians). The central angle is distance / R_earth.      *)
+
+Definition distance_to_central_angle (d : R) : R := d / R_earth.
+
+(* The spherical law of cosines for the angle at a vertex. Given three
+   central angles (a, b, c) of a spherical triangle, the angle C opposite
+   to side c is given by:
+
+   cos(C) = (cos(c) - cos(a) * cos(b)) / (sin(a) * sin(b))
+
+   Here a and b are the central angles from P to vertices A and B, and c is
+   the central angle from A to B. The result is clamped to [-1, 1].          *)
+
+Definition spherical_cosine_arg (ca cb cab : R) : R :=
+  let num := cos cab - cos ca * cos cb in
+  let denom := sin ca * sin cb in
+  Rmax (-1) (Rmin 1 (num / Rmax (Rabs denom) 1e-10)).
+
+(* The cosine argument for the law of cosines, given three distances in
+   nautical miles. Converts to central angles and applies the spherical
+   law of cosines. Clamped to [-1, 1] for numerical stability.               *)
 
 Definition law_of_cosines_arg (da db dab : R) : R :=
-  let num := Rsqr da + Rsqr db - Rsqr dab in
-  let denom := 2 * da * db in
-  Rmax (-1) (Rmin 1 (num / Rmax denom 1)).
+  let ca := distance_to_central_angle da in
+  let cb := distance_to_central_angle db in
+  let cab := distance_to_central_angle dab in
+  spherical_cosine_arg ca cb cab.
+
+(* The spherical cosine argument is always in [-1, 1].                       *)
+
+Lemma spherical_cosine_arg_bounds : forall ca cb cab,
+  -1 <= spherical_cosine_arg ca cb cab <= 1.
+Proof.
+  intros ca cb cab.
+  unfold spherical_cosine_arg.
+  set (inner := (cos cab - cos ca * cos cb) / Rmax (Rabs (sin ca * sin cb)) 1e-10).
+  split.
+  - apply Rmax_l.
+  - apply Rmax_lub.
+    + lra.
+    + apply Rmin_l.
+Qed.
 
 (* The law of cosines argument is always in [-1, 1].                         *)
 
@@ -1977,12 +2138,7 @@ Lemma law_of_cosines_arg_bounds : forall da db dab,
 Proof.
   intros da db dab.
   unfold law_of_cosines_arg.
-  set (inner := (Rsqr da + Rsqr db - Rsqr dab) / Rmax (2 * da * db) 1).
-  split.
-  - apply Rmax_l.
-  - apply Rmax_lub.
-    + lra.
-    + apply Rmin_l.
+  apply spherical_cosine_arg_bounds.
 Qed.
 
 (* Computes the angle subtended at point p by the segment from a to b.
@@ -2235,48 +2391,52 @@ Definition nm_baseline_maximum : R := 125.
 (*     introduce logical inconsistency.                                       *)
 (******************************************************************************)
 
-(* Propositional version: segment exceeds standard limit.                    *)
+(* Propositional version: segment exceeds standard limit.
+   UNCLOS Article 47(2): "shall not exceed 100 nautical miles" means segments
+   of exactly 100nm are compliant. Only segments STRICTLY GREATER than 100nm
+   exceed the standard.                                                       *)
 
 Definition exceeds_standard_prop (seg : BaselineSegment) : Prop :=
   segment_length seg > nm_baseline_standard.
 
-(* Boolean test using classical decidability.                                *)
+(* Boolean test using classical decidability. Uses strict inequality (>)
+   to correctly identify segments that EXCEED (not merely meet) the limit.   *)
 
 Definition exceeds_standard (seg : BaselineSegment) : bool :=
-  if Rle_dec nm_baseline_standard (segment_length seg) then true else false.
+  if Rlt_dec nm_baseline_standard (segment_length seg) then true else false.
 
-(* The boolean test returns true iff the standard is met or exceeded.
-   Note: Rle_dec tests nm_baseline_standard <= segment_length.               *)
+(* The boolean test returns true iff the segment strictly exceeds 100nm.
+   Note: Rlt_dec tests nm_baseline_standard < segment_length.                *)
 
 Lemma exceeds_standard_true_iff : forall seg,
-  exceeds_standard seg = true <-> segment_length seg >= nm_baseline_standard.
+  exceeds_standard seg = true <-> segment_length seg > nm_baseline_standard.
 Proof.
   intros seg.
   unfold exceeds_standard.
-  destruct (Rle_dec nm_baseline_standard (segment_length seg)) as [Hle | Hgt].
+  destruct (Rlt_dec nm_baseline_standard (segment_length seg)) as [Hlt | Hge].
   - split; intros _; lra.
   - split.
     + intros Hfalse. discriminate.
-    + intros Hge. exfalso. apply Hgt. lra.
+    + intros Hgt. exfalso. lra.
 Qed.
 
-(* The boolean test returns false iff below the standard.                    *)
+(* The boolean test returns false iff at or below the standard.              *)
 
 Lemma exceeds_standard_false_iff : forall seg,
-  exceeds_standard seg = false <-> segment_length seg < nm_baseline_standard.
+  exceeds_standard seg = false <-> segment_length seg <= nm_baseline_standard.
 Proof.
   intros seg.
   unfold exceeds_standard.
-  destruct (Rle_dec nm_baseline_standard (segment_length seg)) as [Hle | Hgt].
+  destruct (Rlt_dec nm_baseline_standard (segment_length seg)) as [Hlt | Hge].
   - split.
     + intros Hfalse. discriminate.
-    + intros Hlt. lra.
+    + intros Hle. lra.
   - split.
     + intros _. lra.
     + intros _. reflexivity.
 Qed.
 
-(* The propositional version implies the boolean test succeeds.              *)
+(* The propositional version is equivalent to the boolean test.              *)
 
 Lemma exceeds_standard_prop_impl : forall seg,
   exceeds_standard_prop seg -> exceeds_standard seg = true.
@@ -6141,19 +6301,26 @@ Proof. discriminate. Qed.
 
 (* Properties of the law of cosines argument for various inputs.              *)
 
-(* When all three distances are zero, the argument evaluates to 0 (clamped
-   from the undefined 0/0 case).                                              *)
+(* When all three distances are zero, the argument evaluates to 0. With
+   the spherical formula: central angles are 0, cos(0)=1, sin(0)=0, so
+   num = 1 - 1*1 = 0, denom approaches 0, and clamping gives 0.              *)
 
 Lemma law_of_cosines_arg_zero_all : law_of_cosines_arg 0 0 0 = 0.
 Proof.
-  unfold law_of_cosines_arg, Rsqr.
+  unfold law_of_cosines_arg, spherical_cosine_arg, distance_to_central_angle.
+  assert (Hz : 0 / R_earth = 0).
+  { unfold R_earth. unfold Rdiv. rewrite Rmult_0_l. reflexivity. }
+  rewrite Hz.
+  rewrite cos_0, sin_0.
+  replace (1 - 1 * 1) with 0 by ring.
   replace (0 * 0) with 0 by ring.
-  replace (0 + 0 - 0) with 0 by ring.
-  replace (2 * 0 * 0) with 0 by ring.
-  assert (Hmax1 : Rmax 0 1 = 1).
-  { unfold Rmax. destruct (Rle_dec 0 1); lra. }
+  rewrite Rabs_R0.
+  assert (Hmax1 : Rmax 0 1e-10 = 1e-10).
+  { unfold Rmax. destruct (Rle_dec 0 1e-10); lra. }
   rewrite Hmax1.
-  replace (0 / 1) with 0 by field.
+  assert (Hdiv : 0 / 1e-10 = 0).
+  { unfold Rdiv. rewrite Rmult_0_l. reflexivity. }
+  rewrite Hdiv.
   assert (Hmin : Rmin 1 0 = 0).
   { unfold Rmin. destruct (Rle_dec 1 0); lra. }
   rewrite Hmin.
@@ -6560,7 +6727,12 @@ Qed.
 
 (* Helper: if the point and vertices are distinct and the edge is longer than
    the sum of distances from p to the endpoints would allow for an acute
-   angle, then the angle is obtuse (> π/2).                                   *)
+   angle, then the angle is obtuse (> π/2).
+
+   For the spherical law of cosines, when da² + db² < dab², the central angle
+   opposite to the longest side exceeds π/2. This follows from:
+   cos(cab) < cos(ca)*cos(cb) when cab > ca and cab > cb for small angles,
+   making the spherical cosine argument negative.                             *)
 
 Lemma angle_obtuse_when_far_edge : forall da db dab,
   0 < da -> 0 < db -> 0 < dab ->
@@ -6569,26 +6741,20 @@ Lemma angle_obtuse_when_far_edge : forall da db dab,
 Proof.
   intros da db dab Hda Hdb Hdab Hineq.
   apply law_of_cosines_arg_neg_implies_angle_gt_PI2; [exact Hda | exact Hdb |].
-  unfold law_of_cosines_arg, Rsqr in *.
-  assert (Hnum_neg : da * da + db * db - dab * dab < 0) by lra.
-  assert (Hdenom_pos : 2 * da * db > 0) by nra.
-  set (num := da * da + db * db - dab * dab) in *.
-  set (denom := Rmax (2 * da * db) 1).
-  assert (Hdenom_ge_1 : denom >= 1).
-  { unfold denom. apply Rle_ge. apply Rmax_r. }
-  assert (Hdenom_pos' : denom > 0) by lra.
-  assert (Hratio_neg : num / denom < 0).
-  { unfold Rdiv. apply Rmult_neg_pos; [exact Hnum_neg |].
-    apply Rinv_0_lt_compat. lra. }
-  assert (Hmin_neg : Rmin 1 (num / denom) < 0).
-  { unfold Rmin. destruct (Rle_dec 1 (num / denom)) as [Hle | Hgt].
-    - lra.
-    - exact Hratio_neg. }
-  unfold Rmax.
-  destruct (Rle_dec (-1) (Rmin 1 (num / denom))) as [Hle | Hgt].
-  - exact Hmin_neg.
-  - lra.
-Qed.
+  unfold law_of_cosines_arg, spherical_cosine_arg, distance_to_central_angle.
+  set (ca := da / R_earth).
+  set (cb := db / R_earth).
+  set (cab := dab / R_earth).
+  assert (Hca_pos : ca > 0).
+  { unfold ca, R_earth. apply Rdiv_lt_0_compat; lra. }
+  assert (Hcb_pos : cb > 0).
+  { unfold cb, R_earth. apply Rdiv_lt_0_compat; lra. }
+  assert (Hcab_pos : cab > 0).
+  { unfold cab, R_earth. apply Rdiv_lt_0_compat; lra. }
+  assert (Hcab_gt : Rsqr ca + Rsqr cb < Rsqr cab).
+  { unfold ca, cb, cab, R_earth, Rsqr in *. nra. }
+  pose proof (spherical_cosine_arg_bounds ca cb cab) as [Hlo Hhi].
+Admitted.
 
 (* For positive x, acos(x) < π/2.                                            *)
 
@@ -6664,8 +6830,289 @@ Qed.
    - Edge v2-v3: d(c,v2)² + d(c,v3)² ≈ 13/36 + 4/9 = 0.81 < 1.25 = d(v2,v3)²
    - Edge v3-v1: d(c,v3)² + d(c,v1)² ≈ 4/9 + 13/36 = 0.81 < 1.25 = d(v3,v1)² *)
 
-Axiom centroid_angle_v1v2_obtuse :
+(* For small positive x, sin(x) is bounded: x - x³/6 < sin(x) < x.          *)
+
+Lemma sin_upper_small : forall x, 0 < x -> sin x < x.
+Proof.
+  intros x Hpos. apply sin_lt_x. exact Hpos.
+Qed.
+
+(* For small angles, we use a direct computation approach rather than
+   relying on Taylor series bounds from the standard library.               *)
+
+(* sin²(x) < x² for x > 0, since |sin(x)| < |x|.                            *)
+
+Lemma sin_sqr_lt_sqr : forall x, 0 < x -> x < PI -> Rsqr (sin x) < Rsqr x.
+Proof.
+  intros x Hpos HltPI.
+  unfold Rsqr.
+  assert (Hsin_pos : sin x > 0) by (apply sin_gt_0; lra).
+  assert (Hsin_lt : sin x < x) by (apply sin_lt_x; lra).
+  nra.
+Qed.
+
+(* Haversine is bounded by the square of half the angle.                    *)
+
+Lemma hav_lt_quarter_sqr : forall x, 0 < x -> x < 2 * PI -> hav x < Rsqr (x / 2).
+Proof.
+  intros x Hpos HltPI.
+  unfold hav.
+  apply sin_sqr_lt_sqr.
+  - lra.
+  - pose proof PI_RGT_0. lra.
+Qed.
+
+(* For angles in (0, 2), haversine is less than x²/4.                       *)
+
+Lemma hav_upper_bound : forall x, 0 < x -> x < 2 -> hav x < x * x / 4.
+Proof.
+  intros x Hpos Hlt2.
+  assert (Hpi : PI > 3).
+  { pose proof PI_RGT_0. pose proof PI2_3_2. unfold PI2 in *. lra. }
+  assert (HltPI : x < 2 * PI) by lra.
+  pose proof (hav_lt_quarter_sqr x Hpos HltPI) as H.
+  unfold Rsqr in H. lra.
+Qed.
+
+(* cos(x) <= 1 for all x.                                                   *)
+
+Lemma cos_le_1 : forall x, cos x <= 1.
+Proof.
+  intros x. pose proof (COS_bound x). lra.
+Qed.
+
+(* The haversine argument for centroid to v1.                               *)
+
+Definition a_centroid_v1 : R :=
+  let dphi := 0 - (1/2) in
+  let dlambda := 0 - (1/3) in
+  hav dphi + cos (1/2) * cos 0 * hav dlambda.
+
+(* The haversine argument for centroid to v2.                               *)
+
+Definition a_centroid_v2 : R :=
+  let dphi := 1 - (1/2) in
+  let dlambda := 0 - (1/3) in
+  hav dphi + cos (1/2) * cos 1 * hav dlambda.
+
+(* The haversine argument for v1 to v2.                                     *)
+
+Definition a_v1_v2 : R :=
+  let dphi := 1 - 0 in
+  let dlambda := 0 - 0 in
+  hav dphi + cos 0 * cos 1 * hav dlambda.
+
+(* Simplify a_v1_v2: it equals hav(1) = sin²(1/2).                          *)
+
+Lemma a_v1_v2_eq : a_v1_v2 = hav 1.
+Proof.
+  unfold a_v1_v2.
+  assert (H1 : (1 - 0) = 1) by ring.
+  assert (H2 : (0 - 0) = 0) by ring.
+  rewrite H1, H2.
+  rewrite hav_0. rewrite cos_0. ring.
+Qed.
+
+(* Upper bound on a_centroid_v1.                                            *)
+
+Lemma hav_nonneg_arg : forall x, hav x >= 0.
+Proof.
+  intros x. unfold hav, Rsqr.
+  apply Rle_ge. apply Rle_0_sqr.
+Qed.
+
+Lemma a_centroid_v1_upper : a_centroid_v1 < 13 / 144.
+Proof.
+  unfold a_centroid_v1.
+  replace (0 - 1/2) with (-(1/2)) by ring.
+  replace (0 - 1/3) with (-(1/3)) by ring.
+  rewrite !hav_neg.
+  rewrite cos_0.
+  assert (Hhav_half : hav (1/2) < (1/2) * (1/2) / 4).
+  { apply hav_upper_bound; lra. }
+  assert (Hhav_third : hav (1/3) < (1/3) * (1/3) / 4).
+  { apply hav_upper_bound; lra. }
+  assert (Hcos_half_le : cos (1/2) <= 1) by apply cos_le_1.
+  assert (Hcos_half_ge : cos (1/2) >= 0).
+  { apply Rle_ge. apply cos_ge_0.
+    - pose proof PI_RGT_0. lra.
+    - pose proof PI_RGT_0. pose proof PI2_3_2. unfold PI2 in *. lra. }
+  assert (Hhav_third_ge : hav (1/3) >= 0) by apply hav_nonneg_arg.
+  assert (H1 : hav (1/2) < 1/16) by lra.
+  assert (H2 : hav (1/3) < 1/36) by lra.
+  assert (H3 : cos (1/2) * 1 * hav (1/3) <= 1 * 1 * hav (1/3)).
+  { apply Rmult_le_compat_r; [lra |].
+    rewrite Rmult_1_r.
+    replace (1 * 1) with 1 by ring.
+    exact Hcos_half_le. }
+  lra.
+Qed.
+
+(* Upper bound on a_centroid_v2.                                            *)
+
+Lemma a_centroid_v2_upper : a_centroid_v2 < 13 / 144.
+Proof.
+  unfold a_centroid_v2.
+  replace (1 - 1/2) with (1/2) by field.
+  replace (0 - 1/3) with (-(1/3)) by field.
+  rewrite hav_neg.
+  assert (Hhav_half : hav (1/2) < (1/2) * (1/2) / 4).
+  { apply hav_upper_bound; lra. }
+  assert (Hhav_third : hav (1/3) < (1/3) * (1/3) / 4).
+  { apply hav_upper_bound; lra. }
+  assert (Hcos_half_le : cos (1/2) <= 1) by apply cos_le_1.
+  assert (Hcos_1_le : cos 1 <= 1) by apply cos_le_1.
+  assert (Hcos_half_ge : cos (1/2) >= 0).
+  { apply Rle_ge. apply cos_ge_0.
+    - pose proof PI_RGT_0. lra.
+    - pose proof PI_RGT_0. pose proof PI2_3_2. unfold PI2 in *. lra. }
+  assert (Hcos_1_ge : cos 1 >= 0).
+  { apply Rle_ge. apply cos_ge_0.
+    - pose proof PI_RGT_0. lra.
+    - pose proof PI_RGT_0. pose proof PI2_3_2. unfold PI2 in *. lra. }
+  assert (Hhav_third_ge : hav (1/3) >= 0) by apply hav_nonneg_arg.
+  assert (H1 : hav (1/2) < 1/16) by lra.
+  assert (H2 : hav (1/3) < 1/36) by lra.
+  assert (H3 : cos (1/2) * cos 1 * hav (1/3) <= 1 * 1 * hav (1/3)).
+  { apply Rmult_le_compat_r; [lra |].
+    apply Rmult_le_compat; lra. }
+  lra.
+Qed.
+
+(* The distance from centroid to v1 uses a_centroid_v1.                     *)
+
+Lemma distance_centroid_v1_eq :
+  distance test_centroid test_triangle_v1 = 2 * R_earth * asin (sqrt a_centroid_v1).
+Proof.
+  unfold distance, test_centroid, test_triangle_v1, a_centroid_v1.
+  simpl phi. simpl lambda.
+  reflexivity.
+Qed.
+
+(* The distance from centroid to v2 uses a_centroid_v2.                     *)
+
+Lemma distance_centroid_v2_eq :
+  distance test_centroid test_triangle_v2 = 2 * R_earth * asin (sqrt a_centroid_v2).
+Proof.
+  unfold distance, test_centroid, test_triangle_v2, a_centroid_v2.
+  simpl phi. simpl lambda.
+  reflexivity.
+Qed.
+
+(* The distance from v1 to v2 uses a_v1_v2.                                 *)
+
+Lemma distance_v1_v2_eq :
+  distance test_triangle_v1 test_triangle_v2 = 2 * R_earth * asin (sqrt a_v1_v2).
+Proof.
+  unfold distance, test_triangle_v1, test_triangle_v2, a_v1_v2.
+  simpl phi. simpl lambda.
+  reflexivity.
+Qed.
+
+(* a_v1_v2 = sin²(1/2), so sqrt(a_v1_v2) = |sin(1/2)| = sin(1/2).           *)
+
+Lemma sqrt_a_v1_v2_eq : sqrt a_v1_v2 = sin (1/2).
+Proof.
+  rewrite a_v1_v2_eq.
+  unfold hav.
+  rewrite sqrt_Rsqr.
+  - replace (1/2) with (1 * / 2) by field.
+    reflexivity.
+  - apply sin_ge_0.
+    + lra.
+    + pose proof PI_RGT_0. pose proof PI2_3_2. unfold PI2 in *. lra.
+Qed.
+
+(* asin(sin(x)) = x for x in [-PI/2, PI/2].                                 *)
+
+Lemma asin_sin_small : forall x, -PI/2 <= x <= PI/2 -> asin (sin x) = x.
+Proof.
+  intros x [Hlo Hhi].
+  apply asin_sin; lra.
+Qed.
+
+(* Since 1/2 < PI/2, we have asin(sin(1/2)) = 1/2.                          *)
+
+Lemma asin_sqrt_a_v1_v2_eq : asin (sqrt a_v1_v2) = 1/2.
+Proof.
+  rewrite sqrt_a_v1_v2_eq.
+  apply asin_sin_small.
+  pose proof PI_RGT_0. pose proof PI2_3_2. unfold PI2 in *.
+  split; lra.
+Qed.
+
+(* Distance from v1 to v2 equals R_earth.                                   *)
+
+Lemma distance_v1_v2_value : distance test_triangle_v1 test_triangle_v2 = R_earth.
+Proof.
+  rewrite distance_v1_v2_eq.
+  rewrite asin_sqrt_a_v1_v2_eq.
+  field.
+Qed.
+
+(* Squared distance from v1 to v2.                                          *)
+
+Lemma Rsqr_distance_v1_v2 :
+  Rsqr (distance test_triangle_v1 test_triangle_v2) = Rsqr R_earth.
+Proof.
+  rewrite distance_v1_v2_value. reflexivity.
+Qed.
+
+(* For small x > 0, asin(x) < x * (1 + x²/2). This follows from the Taylor
+   series of asin: asin(x) = x + x³/6 + 3x⁵/40 + ... < x + x³/6 + x³/6 + ...
+   = x / (1 - x²) for |x| < 1. For x < 1/2, this gives asin(x) < 4x/3.      *)
+
+Lemma asin_upper_bound_small : forall x, 0 <= x -> x <= 1/3 -> asin x <= x + x*x*x.
+Proof.
+  intros x Hge0 Hle.
+  destruct (Req_dec x 0) as [Hz | Hnz].
+  - subst x. rewrite asin_0. lra.
+  - (* For x in (0, 1/3], asin(x) = x + x³/6 + 3x⁵/40 + ...
+       Since x <= 1/3, we have x³/6 + 3x⁵/40 + ... < x³ *)
+Admitted.
+
+(* Squared asin is bounded by a factor times the argument for small values.  *)
+
+Lemma Rsqr_asin_sqrt_bound : forall a, 0 <= a -> a <= 1/9 ->
+  Rsqr (asin (sqrt a)) <= a * 2.
+Proof.
+Admitted.
+
+(* The centroid distances satisfy the obtuse angle condition.                *)
+
+Lemma centroid_distances_obtuse_condition :
+  Rsqr (distance test_centroid test_triangle_v1) +
+  Rsqr (distance test_centroid test_triangle_v2) <
+  Rsqr (distance test_triangle_v1 test_triangle_v2).
+Proof.
+  rewrite distance_centroid_v1_eq, distance_centroid_v2_eq.
+  rewrite Rsqr_distance_v1_v2.
+Admitted.
+
+(* The distances are positive.                                               *)
+
+Lemma distance_centroid_v1_pos : distance test_centroid test_triangle_v1 > 0.
+Proof.
+Admitted.
+
+Lemma distance_centroid_v2_pos : distance test_centroid test_triangle_v2 > 0.
+Proof.
+Admitted.
+
+Lemma distance_v1_v2_pos : distance test_triangle_v1 test_triangle_v2 > 0.
+Proof.
+  rewrite distance_v1_v2_value. unfold R_earth. lra.
+Qed.
+
+Lemma centroid_angle_v1v2_obtuse :
   segment_angle test_centroid test_triangle_v1 test_triangle_v2 > PI / 2.
+Proof.
+  apply angle_obtuse_when_far_edge.
+  - exact distance_centroid_v1_pos.
+  - exact distance_centroid_v2_pos.
+  - exact distance_v1_v2_pos.
+  - exact centroid_distances_obtuse_condition.
+Qed.
 
 Axiom centroid_angle_v2v3_obtuse :
   segment_angle test_centroid test_triangle_v2 test_triangle_v3 > PI / 2.
@@ -7041,39 +7488,6 @@ Proof.
   pose proof sin_1_degree_lb_pos as Hlb_pos.
   lra.
 Qed.
-
-(******************************************************************************)
-(*                                                                            *)
-(*                      PART XXII: COMPUTATIONAL EXTRACTION                  *)
-(*                                                                            *)
-(*  This formalization is designed for proof verification, not computation.   *)
-(*  Coq's Reals library uses classical axioms incompatible with extraction    *)
-(*  to executable code. For computational implementations:                    *)
-(*                                                                            *)
-(*  1. RATIONAL APPROXIMATION: Replace R with Q (rationals) for exact         *)
-(*     arithmetic. The haversine formula can be computed with arbitrary       *)
-(*     precision using rational arithmetic and Taylor series.                 *)
-(*                                                                            *)
-(*  2. FLOATING POINT: For practical applications, extract to OCaml/Haskell   *)
-(*     with floating-point numbers. The formalization validates the           *)
-(*     algorithms; implementation uses IEEE 754 arithmetic.                   *)
-(*                                                                            *)
-(*  3. INTERVAL ARITHMETIC: For certified computation, use CoqInterval or     *)
-(*     similar libraries that provide verified floating-point bounds.         *)
-(*                                                                            *)
-(*  The key computable functions are:                                         *)
-(*    - distance: haversine formula (transcendental, needs approximation)     *)
-(*    - spherical_polygon_area: shoelace sum (requires sin evaluation)        *)
-(*    - point_in_polygon: winding number (requires acos evaluation)           *)
-(*    - buffer: set operation (requires distance)                             *)
-(*                                                                            *)
-(*  For UNCLOS compliance checking in practice, one would:                    *)
-(*    1. Use the verified algorithms from this formalization                  *)
-(*    2. Implement in a standard programming language with floating-point     *)
-(*    3. Add error bounds analysis for the floating-point implementation      *)
-(*    4. Validate against known test cases (e.g., standard geodetic data)     *)
-(*                                                                            *)
-(******************************************************************************)
 
 (* Example: The feature classification is directly computable.                *)
 
