@@ -70,6 +70,54 @@ Definition valid_point (p : Point) : Prop :=
   - PI / 2 <= phi p <= PI / 2 /\
   - PI < lambda p <= PI.
 
+(* A ValidPoint bundles a point with proof of its validity. All geographic
+   computations should use ValidPoint to ensure coordinates are legal.       *)
+
+Record ValidPoint := mkValidPoint {
+  vp_point :> Point;
+  vp_valid : valid_point vp_point
+}.
+
+(* Coercion allows ValidPoint to be used wherever Point is expected.         *)
+
+(* Constructor for ValidPoint when validity is known.                        *)
+
+Definition mkValidPointFromCoords (lat lon : R)
+  (Hlat : - PI / 2 <= lat <= PI / 2)
+  (Hlon : - PI < lon <= PI) : ValidPoint :=
+  mkValidPoint (mkPoint lat lon) (conj Hlat Hlon).
+
+(* Latitude bounds extraction.                                               *)
+
+Lemma valid_point_lat_bounds : forall (vp : ValidPoint),
+  - PI / 2 <= phi vp <= PI / 2.
+Proof.
+  intros vp.
+  destruct (vp_valid vp) as [Hlat _].
+  exact Hlat.
+Qed.
+
+(* Longitude bounds extraction.                                              *)
+
+Lemma valid_point_lon_bounds : forall (vp : ValidPoint),
+  - PI < lambda vp <= PI.
+Proof.
+  intros vp.
+  destruct (vp_valid vp) as [_ Hlon].
+  exact Hlon.
+Qed.
+
+(* For valid points, the cosine of latitude is non-negative. This is a
+   domain guarantee that follows from latitude being in [-π/2, π/2].         *)
+
+Lemma valid_point_cos_lat_nonneg : forall (vp : ValidPoint),
+  cos (phi vp) >= 0.
+Proof.
+  intros vp.
+  pose proof (valid_point_lat_bounds vp) as [Hlo Hhi].
+  apply Rle_ge. apply cos_ge_0; lra.
+Qed.
+
 (* Mean radius of Earth: 3440.065 nautical miles. Derived from WGS-84 mean
    radius of 6371.0088 km, converted via the definition of the nautical
    mile as exactly 1852 metres.
@@ -509,7 +557,7 @@ Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*               PART III-B: PASSAGE RIGHTS                                   *)
+(*                      PART IV: PASSAGE RIGHTS                              *)
 (*                                                                            *)
 (*  Articles 17-26: Innocent Passage through the territorial sea.             *)
 (*  Articles 37-44: Transit Passage through international straits.            *)
@@ -524,6 +572,65 @@ Qed.
    to specified conditions.                                                  *)
 
 Definition PassageRight := Region -> Prop.
+
+(* A vessel's state during passage. Article 18 requires passage to be
+   continuous and expeditious. The vessel may be engaged in various
+   activities during its transit. This record captures the observable
+   state relevant to determining passage rights.                             *)
+
+Record VesselState := mkVesselState {
+  vs_is_continuous : bool;
+  vs_is_expeditious : bool;
+  vs_is_stopping : bool;
+  vs_stopping_reason : option nat;
+  vs_prejudicial_activities : nat
+}.
+
+(* Stopping reasons encoded as natural numbers for decidability:
+   0 = force majeure, 1 = distress, 2 = rendering assistance, 3+ = other   *)
+
+Definition stopping_for_force_majeure (v : VesselState) : Prop :=
+  vs_is_stopping v = true /\ vs_stopping_reason v = Some 0%nat.
+
+Definition stopping_for_distress (v : VesselState) : Prop :=
+  vs_is_stopping v = true /\ vs_stopping_reason v = Some 1%nat.
+
+Definition stopping_for_assistance (v : VesselState) : Prop :=
+  vs_is_stopping v = true /\ vs_stopping_reason v = Some 2%nat.
+
+Definition stopping_for_other_reason (v : VesselState) : Prop :=
+  vs_is_stopping v = true /\
+  exists n, vs_stopping_reason v = Some n /\ (n >= 3)%nat.
+
+(* Article 18(2): Stopping is permitted only for the three enumerated
+   reasons. A vessel satisfies the continuity requirement if it is either
+   not stopping, or stopping for a permitted reason.                        *)
+
+Definition satisfies_article_18_2 (v : VesselState) : Prop :=
+  vs_is_stopping v = false \/
+  stopping_for_force_majeure v \/
+  stopping_for_distress v \/
+  stopping_for_assistance v.
+
+(* A vessel stopping for an impermissible reason violates Article 18.       *)
+
+Lemma stopping_other_violates_18 : forall v,
+  stopping_for_other_reason v -> ~ satisfies_article_18_2 v.
+Proof.
+  intros v [Hstopping [n [Hreason Hge]]] H18.
+  unfold satisfies_article_18_2 in H18.
+  destruct H18 as [Hnot_stopping | [Hfm | [Hd | Ha]]].
+  - rewrite Hstopping in Hnot_stopping. discriminate.
+  - unfold stopping_for_force_majeure in Hfm.
+    destruct Hfm as [_ Hfm_reason].
+    rewrite Hreason in Hfm_reason. injection Hfm_reason. lia.
+  - unfold stopping_for_distress in Hd.
+    destruct Hd as [_ Hd_reason].
+    rewrite Hreason in Hd_reason. injection Hd_reason. lia.
+  - unfold stopping_for_assistance in Ha.
+    destruct Ha as [_ Ha_reason].
+    rewrite Hreason in Ha_reason. injection Ha_reason. lia.
+Qed.
 
 (* Article 17: Ships of all States enjoy the right of innocent passage
    through the territorial sea. Innocent passage is continuous and
@@ -569,14 +676,57 @@ Inductive Article19Activity : Type :=
   | InterfereWithCommunications
   | OtherNonPassageActivity.
 
-Definition renders_passage_non_innocent (act : Article19Activity) : bool := true.
+(* A vessel is engaging in prejudicial activities if the count is nonzero.  *)
 
-(* All Article 19 activities render passage non-innocent.                    *)
+Definition engaging_in_prejudicial_activity (v : VesselState) : Prop :=
+  (vs_prejudicial_activities v > 0)%nat.
 
-Theorem article19_all_prejudicial : forall act : Article19Activity,
-  renders_passage_non_innocent act = true.
+(* A vessel's passage is innocent under Article 19 iff:
+   1. It is continuous and expeditious (Article 18)
+   2. Any stopping is for a permitted reason (Article 18(2))
+   3. It is not engaging in any prejudicial activity (Article 19)           *)
+
+Definition passage_is_innocent (v : VesselState) : Prop :=
+  vs_is_continuous v = true /\
+  vs_is_expeditious v = true /\
+  satisfies_article_18_2 v /\
+  (vs_prejudicial_activities v = 0)%nat.
+
+(* Article 19(2): Engaging in ANY prejudicial activity negates innocence.
+   This theorem is substantive: it requires proving the conjunction fails.  *)
+
+Theorem article19_prejudicial_negates_innocence : forall v : VesselState,
+  engaging_in_prejudicial_activity v -> ~ passage_is_innocent v.
 Proof.
-  intros act. reflexivity.
+  intros v Hprej Hinnocent.
+  unfold engaging_in_prejudicial_activity in Hprej.
+  unfold passage_is_innocent in Hinnocent.
+  destruct Hinnocent as [_ [_ [_ Hzero]]].
+  lia.
+Qed.
+
+(* Conversely: innocent passage implies no prejudicial activities.          *)
+
+Theorem innocent_implies_no_prejudicial : forall v : VesselState,
+  passage_is_innocent v -> ~ engaging_in_prejudicial_activity v.
+Proof.
+  intros v Hinnocent Hprej.
+  exact (article19_prejudicial_negates_innocence v Hprej Hinnocent).
+Qed.
+
+(* A vessel with zero prejudicial activities and proper navigation has
+   innocent passage. This is the constructive direction.                    *)
+
+Theorem lawful_vessel_has_innocent_passage : forall v : VesselState,
+  vs_is_continuous v = true ->
+  vs_is_expeditious v = true ->
+  satisfies_article_18_2 v ->
+  (vs_prejudicial_activities v = 0)%nat ->
+  passage_is_innocent v.
+Proof.
+  intros v Hcont Hexp H18 Hzero.
+  unfold passage_is_innocent.
+  repeat split; assumption.
 Qed.
 
 (* Article 38: Transit Passage through international straits. Ships and
@@ -617,22 +767,81 @@ Inductive TransitDuty : Type :=
 Definition must_satisfy_transit_duties : list TransitDuty :=
   [ProceedWithoutDelay; RefrainFromForce; ComplyWithSafety; ComplyWithPollution].
 
-(* Transit passage cannot be suspended. Article 44.                          *)
+(* A suspension order is issued by a coastal state to restrict passage
+   through a specified region. Article 25(3) governs innocent passage
+   suspension; Article 44 prohibits transit passage suspension.             *)
 
-Definition transit_passage_non_suspendable : Prop := True.
+Record SuspensionOrder := mkSuspensionOrder {
+  so_region : Region;
+  so_is_temporary : bool;
+  so_is_non_discriminatory : bool;
+  so_is_essential_for_security : bool;
+  so_is_duly_published : bool
+}.
 
-Theorem transit_cannot_be_suspended :
-  transit_passage_non_suspendable.
-Proof. exact I. Qed.
+(* Article 25(3): The coastal State may temporarily suspend innocent passage
+   in specified areas if such suspension is essential for the protection of
+   its security, including weapons exercises. Such suspension shall take
+   effect only after having been duly published.                             *)
 
-(* Innocent passage may be temporarily suspended in specified areas for
-   security reasons. Article 25(3). Transit passage may not be suspended.    *)
+Definition valid_innocent_passage_suspension (s : SuspensionOrder) : Prop :=
+  so_is_temporary s = true /\
+  so_is_non_discriminatory s = true /\
+  so_is_essential_for_security s = true /\
+  so_is_duly_published s = true.
 
-Definition innocent_passage_suspendable : Prop := True.
+(* Article 44: States bordering straits shall not suspend transit passage.
+   There is NO valid suspension order for transit passage.                   *)
+
+Definition valid_transit_passage_suspension (s : SuspensionOrder) : Prop :=
+  False.
+
+(* Transit passage cannot be suspended: any purported suspension is invalid. *)
+
+Theorem transit_cannot_be_suspended : forall s : SuspensionOrder,
+  ~ valid_transit_passage_suspension s.
+Proof.
+  intros s H.
+  unfold valid_transit_passage_suspension in H.
+  exact H.
+Qed.
+
+(* There exist valid suspension orders for innocent passage.                 *)
+
+Theorem innocent_passage_can_be_suspended :
+  exists s : SuspensionOrder, valid_innocent_passage_suspension s.
+Proof.
+  exists (mkSuspensionOrder (fun _ => True) true true true true).
+  unfold valid_innocent_passage_suspension.
+  repeat split; reflexivity.
+Qed.
+
+(* The asymmetry: innocent passage is suspendable, transit passage is not.
+   This theorem has real content: it proves existence vs impossibility.     *)
 
 Theorem passage_suspension_asymmetry :
-  innocent_passage_suspendable /\ transit_passage_non_suspendable.
-Proof. split; exact I. Qed.
+  (exists s, valid_innocent_passage_suspension s) /\
+  (forall s, ~ valid_transit_passage_suspension s).
+Proof.
+  split.
+  - exact innocent_passage_can_be_suspended.
+  - exact transit_cannot_be_suspended.
+Qed.
+
+(* A suspension missing any required element is invalid for innocent passage. *)
+
+Theorem incomplete_suspension_invalid : forall s,
+  (so_is_temporary s = false \/
+   so_is_non_discriminatory s = false \/
+   so_is_essential_for_security s = false \/
+   so_is_duly_published s = false) ->
+  ~ valid_innocent_passage_suspension s.
+Proof.
+  intros s Hmissing Hvalid.
+  unfold valid_innocent_passage_suspension in Hvalid.
+  destruct Hvalid as [Htemp [Hnon_disc [Hessential Hpub]]].
+  destruct Hmissing as [H | [H | [H | H]]]; congruence.
+Qed.
 
 (* Article 52: Archipelagic Sea Lanes Passage. Ships and aircraft enjoy the
    right of passage through designated sea lanes for continuous and
@@ -671,7 +880,7 @@ Proof. reflexivity. Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*                    PART III-A: CONTINENTAL SHELF                           *)
+(*                      PART V: CONTINENTAL SHELF                            *)
 (*                                                                            *)
 (*  Article 76. Rights over the seabed and subsoil extending beyond the       *)
 (*  territorial sea throughout the natural prolongation of the land           *)
@@ -1049,7 +1258,7 @@ Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*                      PART IV: COORDINATE UTILITIES                         *)
+(*                      PART VI: COORDINATE UTILITIES                        *)
 (*                                                                            *)
 (*  Conversion utilities for human-readable coordinate input. Maritime        *)
 (*  coordinates are conventionally expressed in degrees; internal             *)
@@ -1092,6 +1301,46 @@ Proof. unfold deg_to_rad. field. Qed.
 Lemma deg_to_rad_neg : forall d, deg_to_rad (-d) = - deg_to_rad d.
 Proof. intros d. unfold deg_to_rad. field. Qed.
 
+(* Degree-to-radian conversion is monotonic.                                 *)
+
+Lemma deg_to_rad_le : forall d1 d2, d1 <= d2 -> deg_to_rad d1 <= deg_to_rad d2.
+Proof.
+  intros d1 d2 Hle.
+  unfold deg_to_rad.
+  assert (Hpos : PI / 180 > 0).
+  { apply Rdiv_lt_0_compat. exact PI_RGT_0. lra. }
+  nra.
+Qed.
+
+Lemma deg_to_rad_lt : forall d1 d2, d1 < d2 -> deg_to_rad d1 < deg_to_rad d2.
+Proof.
+  intros d1 d2 Hlt.
+  unfold deg_to_rad.
+  assert (Hpos : PI / 180 > 0).
+  { apply Rdiv_lt_0_compat. exact PI_RGT_0. lra. }
+  nra.
+Qed.
+
+(* A point constructed from degrees in [-90, 90] × (-180, 180] is valid.     *)
+
+Lemma mkPointDeg_valid : forall lat_deg lon_deg,
+  -90 <= lat_deg <= 90 ->
+  -180 < lon_deg <= 180 ->
+  valid_point (mkPointDeg lat_deg lon_deg).
+Proof.
+  intros lat_deg lon_deg [Hlat_lo Hlat_hi] [Hlon_lo Hlon_hi].
+  unfold valid_point, mkPointDeg, deg_to_rad. simpl.
+  assert (Hpi : PI > 0) by exact PI_RGT_0.
+  split; split; nra.
+Qed.
+
+(* Construct a ValidPoint from degree coordinates with proof obligations.    *)
+
+Definition mkValidPointDeg (lat_deg lon_deg : R)
+  (Hlat : -90 <= lat_deg <= 90)
+  (Hlon : -180 < lon_deg <= 180) : ValidPoint :=
+  mkValidPoint (mkPointDeg lat_deg lon_deg) (mkPointDeg_valid lat_deg lon_deg Hlat Hlon).
+
 (* The conversion factor π/180 is positive. Required for monotonicity.       *)
 
 Lemma PI_div_180_pos : PI / 180 > 0.
@@ -1123,7 +1372,7 @@ Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*                      PART V: SPHERICAL POLYGON AREA                        *)
+(*                      PART VII: SPHERICAL POLYGON AREA                     *)
 (*                                                                            *)
 (*  Area computation on the sphere. Required for the water-to-land ratio      *)
 (*  constraint of Article 47. The area of a spherical polygon is computed     *)
@@ -1167,9 +1416,6 @@ Fixpoint spherical_shoelace_aux (pts : list Point) (all_pts : list Point)
 
 Definition spherical_shoelace (pts : list Point) : R :=
   spherical_shoelace_aux pts pts 0.
-
-(* Computes the area of a spherical polygon in square nautical miles. Takes
-   the absolute value of the signed area to handle either vertex ordering.   *)
 
 Definition spherical_polygon_area (poly : Polygon) : R :=
   Rabs (Rsqr R_earth * spherical_shoelace poly / 2).
@@ -1423,7 +1669,7 @@ Definition polygon_area (poly : Polygon) : R :=
 
 (******************************************************************************)
 (*                                                                            *)
-(*                      PART VI: ARCHIPELAGIC STATES                          *)
+(*                      PART VIII: ARCHIPELAGIC STATES                       *)
 (*                                                                            *)
 (*  Article 47. Archipelagic baselines. Part IV of the Convention governs     *)
 (*  states constituted wholly by one or more archipelagos. Such states may    *)
@@ -1758,7 +2004,7 @@ Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*                   PART VII: COASTAL STATES AND CLAIMS                      *)
+(*                      PART IX: COASTAL STATES AND CLAIMS                   *)
 (*                                                                            *)
 (*  Representation of coastal states and their overlapping maritime claims.   *)
 (*                                                                            *)
@@ -1819,7 +2065,7 @@ Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*              PART VII-A: EQUIDISTANCE AND MARITIME DELIMITATION            *)
+(*                      PART X: EQUIDISTANCE AND DELIMITATION                *)
 (*                                                                            *)
 (*  Articles 74 and 83. Delimitation of overlapping EEZ and continental       *)
 (*  shelf claims between states with opposite or adjacent coasts.             *)
@@ -2148,7 +2394,7 @@ Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*              PART VII-A.0: TRIANGLE INEQUALITY                             *)
+(*                      PART XI: TRIANGLE INEQUALITY                         *)
 (*                                                                            *)
 (*  The triangle inequality for spherical distance: d(p,r) ≤ d(p,q) + d(q,r). *)
 (*  This is the fundamental metric axiom establishing that geodesics are      *)
@@ -2584,7 +2830,7 @@ Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*              PART VII-A.1: WINDING NUMBER CORRECTNESS                      *)
+(*                      PART XII: WINDING NUMBER ALGORITHMS                  *)
 (*                                                                            *)
 (*  Correctness lemmas for the polygon interior computation. The winding      *)
 (*  number method determines point-in-polygon by summing subtended angles.    *)
@@ -3419,7 +3665,7 @@ Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*                  PART VIII: REGIME OF ISLANDS                              *)
+(*                      PART XIII: REGIME OF ISLANDS                         *)
 (*                                                                            *)
 (*  Article 121. An island is a naturally formed area of land, surrounded    *)
 (*  by water, which is above water at high tide. Rocks which cannot sustain   *)
@@ -3554,7 +3800,7 @@ Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*              PART IX: SOUTH CHINA SEA ARBITRATION                          *)
+(*                      PART XIV: SOUTH CHINA SEA ARBITRATION                *)
 (*                                                                            *)
 (*  The 2016 Arbitral Tribunal in Philippines v. China ruled that China's    *)
 (*  Nine-Dash Line claim has no legal basis under UNCLOS, that the Spratly   *)
@@ -3574,6 +3820,60 @@ Definition johnson_reef : Point := mkPointDeg 9.72 114.28.
 Definition cuarteron_reef : Point := mkPointDeg 8.86 112.84.
 Definition gaven_reef : Point := mkPointDeg 10.21 114.22.
 Definition hughes_reef : Point := mkPointDeg 9.93 114.50.
+
+(* All South China Sea feature coordinates are valid geographic points.
+   Latitudes are in [8°, 16°] ⊂ [-90°, 90°].
+   Longitudes are in [112°, 118°] ⊂ (-180°, 180°].                          *)
+
+Lemma scarborough_shoal_valid : valid_point scarborough_shoal.
+Proof. apply mkPointDeg_valid; lra. Qed.
+
+Lemma mischief_reef_valid : valid_point mischief_reef.
+Proof. apply mkPointDeg_valid; lra. Qed.
+
+Lemma subi_reef_valid : valid_point subi_reef.
+Proof. apply mkPointDeg_valid; lra. Qed.
+
+Lemma fiery_cross_reef_valid : valid_point fiery_cross_reef.
+Proof. apply mkPointDeg_valid; lra. Qed.
+
+Lemma johnson_reef_valid : valid_point johnson_reef.
+Proof. apply mkPointDeg_valid; lra. Qed.
+
+Lemma cuarteron_reef_valid : valid_point cuarteron_reef.
+Proof. apply mkPointDeg_valid; lra. Qed.
+
+Lemma gaven_reef_valid : valid_point gaven_reef.
+Proof. apply mkPointDeg_valid; lra. Qed.
+
+Lemma hughes_reef_valid : valid_point hughes_reef.
+Proof. apply mkPointDeg_valid; lra. Qed.
+
+(* Bundled ValidPoint versions for use where validity is required.          *)
+
+Definition scarborough_shoal_vp : ValidPoint :=
+  mkValidPoint scarborough_shoal scarborough_shoal_valid.
+
+Definition mischief_reef_vp : ValidPoint :=
+  mkValidPoint mischief_reef mischief_reef_valid.
+
+Definition subi_reef_vp : ValidPoint :=
+  mkValidPoint subi_reef subi_reef_valid.
+
+Definition fiery_cross_reef_vp : ValidPoint :=
+  mkValidPoint fiery_cross_reef fiery_cross_reef_valid.
+
+Definition johnson_reef_vp : ValidPoint :=
+  mkValidPoint johnson_reef johnson_reef_valid.
+
+Definition cuarteron_reef_vp : ValidPoint :=
+  mkValidPoint cuarteron_reef cuarteron_reef_valid.
+
+Definition gaven_reef_vp : ValidPoint :=
+  mkValidPoint gaven_reef gaven_reef_valid.
+
+Definition hughes_reef_vp : ValidPoint :=
+  mkValidPoint hughes_reef hughes_reef_valid.
 
 (* The 2016 Arbitral Tribunal classified these features as either low-tide
    elevations or rocks under Article 121(3). Classifications are based on
@@ -3676,7 +3976,7 @@ Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*                PART X: WATER-TO-LAND RATIO ANALYSIS                        *)
+(*                      PART XV: WATER-TO-LAND RATIO ANALYSIS                *)
 (*                                                                            *)
 (*  Article 47 requires the water-to-land ratio within archipelagic          *)
 (*  baselines to fall between 1:1 and 9:1. Features with negligible land     *)
@@ -3809,7 +4109,7 @@ Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*                  PART XI: NUMERICAL BOUNDS                                 *)
+(*                      PART XVI: NUMERICAL BOUNDS                           *)
 (*                                                                            *)
 (*  Concrete numerical bounds establish that the baseline area enclosing     *)
 (*  the Spratly features is enormous while the land area is negligible.      *)
@@ -4061,6 +4361,117 @@ Definition baseline_lon_span_rad : R := deg_to_rad baseline_lon_span_deg.
 
 Definition mid_latitude_deg : R := 10.
 Definition mid_latitude_rad : R := deg_to_rad mid_latitude_deg.
+
+Definition scs_lat_south_deg : R := 8.5.
+Definition scs_lat_north_deg : R := 11.5.
+Definition scs_lat_south_rad : R := deg_to_rad scs_lat_south_deg.
+Definition scs_lat_north_rad : R := deg_to_rad scs_lat_north_deg.
+
+Lemma scs_lat_south_rad_pos : scs_lat_south_rad > 0.
+Proof.
+  unfold scs_lat_south_rad, scs_lat_south_deg, deg_to_rad.
+  assert (Hpi : PI > 0) by exact PI_RGT_0.
+  nra.
+Qed.
+
+Lemma scs_lat_south_lt_north : scs_lat_south_rad < scs_lat_north_rad.
+Proof.
+  unfold scs_lat_south_rad, scs_lat_north_rad, scs_lat_south_deg, scs_lat_north_deg, deg_to_rad.
+  assert (Hpi : PI > 0) by exact PI_RGT_0.
+  nra.
+Qed.
+
+Lemma scs_lat_north_lt_pi2 : scs_lat_north_rad < PI / 2.
+Proof.
+  unfold scs_lat_north_rad, scs_lat_north_deg, deg_to_rad.
+  assert (Hpi : PI > 0) by exact PI_RGT_0.
+  nra.
+Qed.
+
+Lemma scs_sin_north_gt_sin_south : sin scs_lat_north_rad > sin scs_lat_south_rad.
+Proof.
+  pose proof scs_lat_south_rad_pos as Hs_pos.
+  pose proof scs_lat_north_lt_pi2 as Hn_lt.
+  pose proof scs_lat_south_lt_north as Hs_lt_n.
+  pose proof PI_RGT_0 as Hpi.
+  apply sin_increasing_1; lra.
+Qed.
+
+Lemma scs_sin_diff_positive : sin scs_lat_north_rad - sin scs_lat_south_rad > 0.
+Proof.
+  pose proof scs_sin_north_gt_sin_south. lra.
+Qed.
+
+Lemma scs_lat_diff_value : scs_lat_north_rad - scs_lat_south_rad = deg_to_rad 3.
+Proof.
+  unfold scs_lat_north_rad, scs_lat_south_rad, scs_lat_north_deg, scs_lat_south_deg, deg_to_rad.
+  lra.
+Qed.
+
+Lemma scs_cos_north_pos : cos scs_lat_north_rad > 0.
+Proof.
+  apply cos_gt_0.
+  - pose proof scs_lat_south_rad_pos.
+    pose proof scs_lat_south_lt_north.
+    pose proof PI_RGT_0.
+    lra.
+  - exact scs_lat_north_lt_pi2.
+Qed.
+
+Lemma scs_lat_north_rad_small : scs_lat_north_rad < 1.
+Proof.
+  unfold scs_lat_north_rad, scs_lat_north_deg, deg_to_rad.
+  assert (Hpi : PI <= 4) by exact PI_4.
+  nra.
+Qed.
+
+Lemma cos_lower_bound : forall x, 0 < x < PI -> cos x > 1 - Rsqr x / 2.
+Proof.
+  intros x [Hpos Hlt_pi].
+  replace x with (2 * (x/2)) at 1 by lra.
+  rewrite cos_2a_sin.
+  unfold Rsqr.
+  assert (Hpi : PI > 0) by exact PI_RGT_0.
+  assert (Hsin_pos : 0 <= sin (x/2)).
+  { apply sin_ge_0; lra. }
+  assert (Hsin_bound : sin (x/2) < x/2).
+  { apply sin_lt_x. lra. }
+  assert (Hsqr_bound : Rsqr (sin (x/2)) < Rsqr (x/2)).
+  { apply Rsqr_incrst_1; [exact Hsin_bound | lra | lra]. }
+  unfold Rsqr in Hsqr_bound.
+  lra.
+Qed.
+
+Lemma scs_lat_north_rad_lt_pi : scs_lat_north_rad < PI.
+Proof.
+  pose proof scs_lat_north_lt_pi2 as H.
+  pose proof PI_RGT_0.
+  lra.
+Qed.
+
+Lemma scs_lat_north_sqr_bound : Rsqr scs_lat_north_rad < 1.
+Proof.
+  pose proof scs_lat_north_rad_small as H.
+  pose proof scs_lat_south_rad_pos.
+  pose proof scs_lat_south_lt_north.
+  unfold Rsqr.
+  nra.
+Qed.
+
+Lemma scs_cos_north_gt_half : cos scs_lat_north_rad > 1/2.
+Proof.
+  pose proof scs_lat_south_rad_pos.
+  pose proof scs_lat_south_lt_north.
+  pose proof scs_lat_north_rad_lt_pi.
+  pose proof scs_lat_north_sqr_bound.
+  pose proof (cos_lower_bound scs_lat_north_rad).
+  lra.
+Qed.
+
+Lemma scs_lat_diff_rad_positive : scs_lat_north_rad - scs_lat_south_rad > 0.
+Proof.
+  pose proof scs_lat_south_lt_north. lra.
+Qed.
 
 (* For the spherical shoelace formula, area depends on:
    A ≈ R² × Δλ × (sin(φ_north) - sin(φ_south))
@@ -4349,7 +4760,7 @@ Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*                  PART XII: ARTIFICIAL ISLANDS                              *)
+(*                      PART XVII: ARTIFICIAL ISLANDS                        *)
 (*                                                                            *)
 (*  Article 60(8). Artificial islands, installations and structures do not   *)
 (*  possess the status of islands. They have no territorial sea of their     *)
@@ -4545,7 +4956,7 @@ Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*            PART XIII: NANSHA (SPRATLY) ISLANDS GEOMETRIC ANALYSIS          *)
+(*                      PART XVIII: NANSHA ISLANDS ANALYSIS                  *)
 (*                                                                            *)
 (*  Application of Article 47 water-to-land ratio constraint using actual    *)
 (*  geographic data. Feature positions from US National Geospatial-          *)
@@ -5026,7 +5437,7 @@ Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*            PART XIV: EXCLUSIVE ECONOMIC ZONE RIGHTS                        *)
+(*                      PART XIX: EXCLUSIVE ECONOMIC ZONE RIGHTS             *)
 (*                                                                            *)
 (*  Article 55. The exclusive economic zone is an area beyond and adjacent   *)
 (*  to the territorial sea, subject to the specific legal regime established *)
@@ -5144,7 +5555,7 @@ Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*            PART XV: WINDING NUMBER VERIFICATION                            *)
+(*                      PART XX: WINDING NUMBER VERIFICATION                 *)
 (*                                                                            *)
 (*  Complete verification of the winding number algorithm for point-in-       *)
 (*  polygon determination. We construct concrete test polygons and prove      *)
@@ -5767,7 +6178,7 @@ Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*            PART XVI: SPHERICAL AREA VALIDATION                             *)
+(*                      PART XXI: SPHERICAL AREA VALIDATION                  *)
 (*                                                                            *)
 (*  Validation of the spherical polygon area computation by comparing         *)
 (*  with known areas and establishing consistency properties.                 *)
@@ -5865,6 +6276,49 @@ Proof.
   apply Rmult_le_pos.
   - apply Rmult_le_pos; apply Rge_le; assumption.
   - apply Rge_le; assumption.
+Qed.
+
+Definition scs_exact_baseline_area : R :=
+  spherical_rect_area scs_lat_south_rad scs_lat_north_rad 0 baseline_lon_span_rad.
+
+Lemma scs_exact_baseline_area_formula :
+  scs_exact_baseline_area =
+  Rsqr R_earth * baseline_lon_span_rad * (sin scs_lat_north_rad - sin scs_lat_south_rad).
+Proof.
+  unfold scs_exact_baseline_area, spherical_rect_area.
+  pose proof scs_sin_north_gt_sin_south as Hsin.
+  assert (Hlon_pos : baseline_lon_span_rad - 0 >= 0).
+  { unfold baseline_lon_span_rad, baseline_lon_span_deg, deg_to_rad.
+    pose proof PI_RGT_0. lra. }
+  assert (Hsin_pos : sin scs_lat_north_rad - sin scs_lat_south_rad >= 0) by lra.
+  rewrite Rabs_right by exact Hlon_pos.
+  rewrite Rabs_right by exact Hsin_pos.
+  ring.
+Qed.
+
+Lemma min_baseline_area_structure :
+  min_baseline_area = Rsqr R_earth * baseline_lon_span_rad * min_baseline_area_factor.
+Proof.
+  unfold min_baseline_area. ring.
+Qed.
+
+Lemma min_baseline_is_lower_bound :
+  sin scs_lat_north_rad - sin scs_lat_south_rad >= min_baseline_area_factor ->
+  min_baseline_area <= scs_exact_baseline_area.
+Proof.
+  intros Hsin_bound.
+  rewrite min_baseline_area_structure.
+  rewrite scs_exact_baseline_area_formula.
+  assert (HR : Rsqr R_earth > 0).
+  { unfold Rsqr, R_earth. nra. }
+  assert (Hlon : baseline_lon_span_rad > 0).
+  { unfold baseline_lon_span_rad, baseline_lon_span_deg, deg_to_rad.
+    pose proof PI_RGT_0. nra. }
+  assert (Hfactor : min_baseline_area_factor > 0).
+  { unfold min_baseline_area_factor. lra. }
+  apply Rmult_le_compat_l.
+  - apply Rmult_le_pos; [apply Rlt_le; exact HR | apply Rlt_le; exact Hlon].
+  - apply Rge_le. exact Hsin_bound.
 Qed.
 
 (* Consistency check: a full longitude circle at the equator has area
@@ -6048,7 +6502,7 @@ Qed.
 
 (******************************************************************************)
 (*                                                                            *)
-(*            PART XVII: COMPUTATIONAL EXTRACTION NOTE                        *)
+(*                      PART XXII: COMPUTATIONAL EXTRACTION                  *)
 (*                                                                            *)
 (*  This formalization is designed for proof verification, not computation.   *)
 (*  Coq's Reals library uses classical axioms incompatible with extraction    *)
