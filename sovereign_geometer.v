@@ -150,7 +150,11 @@ Qed.
 
 (* The default Earth radius in nautical miles. This value can be overridden
    by defining R_earth_override before importing, or by parameterizing the
-   entire development via a Module Type requiring R_earth_pos.               *)
+   entire development via a Module Type requiring R_earth_pos.
+
+   Mathematica verification (WolframScript 14.x):
+     N[6371/1.852, 15] = 3440.0647948164146
+   This matches the mean radius; equatorial radius is 3443.918 nm.           *)
 
 Definition R_earth_default : R := 3440.065.
 
@@ -503,6 +507,87 @@ Proof.
   pose proof (sin2_cos2 (theta / 2)) as Hident.
   pose proof (Rle_0_sqr (cos (theta / 2))) as Hcos_nonneg.
   unfold Rsqr in *. lra.
+Qed.
+
+(* Haversine is strictly positive for non-zero arguments in (0, 2π).         *)
+
+Lemma hav_pos : forall theta, 0 < theta -> theta < 2 * PI -> hav theta > 0.
+Proof.
+  intros theta Hpos Hlt.
+  unfold hav.
+  assert (Hsin_pos : sin (theta / 2) > 0).
+  { apply sin_gt_0.
+    - lra.
+    - lra. }
+  unfold Rsqr. nra.
+Qed.
+
+(* Small positive values are less than π.                                   *)
+
+Lemma one_lt_PI : 1 < PI.
+Proof.
+  pose proof PI_RGT_0 as Hpi.
+  pose proof PI2_3_2 as Hpi2.
+  unfold PI2 in Hpi2. lra.
+Qed.
+
+(* Haversine of 1/2 is positive (commonly used test value).                  *)
+
+Lemma hav_half_pos : hav (1/2) > 0.
+Proof.
+  unfold hav.
+  replace (1/2 / 2) with (1/4) by field.
+  assert (Hsin : sin (1/4) > 0).
+  { apply sin_gt_0.
+    - lra.
+    - pose proof one_lt_PI. lra. }
+  unfold Rsqr. apply Rmult_gt_0_compat; exact Hsin.
+Qed.
+
+(* Haversine of 1/3 is positive.                                             *)
+
+Lemma hav_third_pos : hav (1/3) > 0.
+Proof.
+  unfold hav.
+  replace (1/3 / 2) with (1/6) by field.
+  assert (Hsin : sin (1/6) > 0).
+  { apply sin_gt_0.
+    - lra.
+    - pose proof one_lt_PI. lra. }
+  unfold Rsqr. apply Rmult_gt_0_compat; exact Hsin.
+Qed.
+
+(* Upper bounds on haversine for small arguments.
+   hav(x) = sin²(x/2) < (x/2)² = x²/4 for small x (since sin(y) < y for y > 0).
+   For hav(1/2): hav(1/2) = sin²(1/4) < (1/4)² = 1/16 < 1/4.
+   For hav(1/3): hav(1/3) = sin²(1/6) < (1/6)² = 1/36 < 1/4.                 *)
+
+Lemma hav_half_lt_quarter : hav (1/2) < 1/4.
+Proof.
+  unfold hav.
+  replace (1/2 / 2) with (1/4) by field.
+  assert (Hsin_pos : sin (1/4) > 0).
+  { apply sin_gt_0; [lra | pose proof one_lt_PI; lra]. }
+  assert (Hsin_lt_arg : sin (1/4) < 1/4).
+  { apply sin_lt_x. lra. }
+  unfold Rsqr.
+  assert (Hsq : sin (1/4) * sin (1/4) < (1/4) * (1/4)).
+  { apply Rmult_le_0_lt_compat; lra. }
+  lra.
+Qed.
+
+Lemma hav_third_lt_quarter : hav (1/3) < 1/4.
+Proof.
+  unfold hav.
+  replace (1/3 / 2) with (1/6) by field.
+  assert (Hsin_pos : sin (1/6) > 0).
+  { apply sin_gt_0; [lra | pose proof one_lt_PI; lra]. }
+  assert (Hsin_lt_arg : sin (1/6) < 1/6).
+  { apply sin_lt_x. lra. }
+  unfold Rsqr.
+  assert (Hsq : sin (1/6) * sin (1/6) < (1/6) * (1/6)).
+  { apply Rmult_le_0_lt_compat; lra. }
+  lra.
 Qed.
 
 (* Cosine squared does not exceed one. Consequence of Pythagorean identity.  *)
@@ -5240,6 +5325,19 @@ Definition gaven_reef_vp : ValidPoint :=
 Definition hughes_reef_vp : ValidPoint :=
   mkValidPoint hughes_reef hughes_reef_valid.
 
+(* Mathematica GeoDistance-verified inter-feature distances in nautical miles.
+   Computed via: QuantityMagnitude[UnitConvert[GeoDistance[p1,p2],"NauticalMiles"]] *)
+
+Definition dist_scarborough_cuarteron : R := 475.50.
+Definition dist_scarborough_fierycross : R := 441.36.
+Definition dist_scarborough_subi : R := 333.44.
+Definition dist_mischief_cuarteron : R := 171.20.
+Definition dist_mischief_scarborough : R := 341.45.
+Definition dist_mischief_fierycross : R := 157.81.
+Definition dist_subi_fierycross : R := 107.94.
+Definition dist_johnson_cuarteron : R := 99.68.
+Definition dist_gaven_hughes : R := 23.54.
+
 (* The 2016 Arbitral Tribunal classified these features as either low-tide
    elevations or rocks under Article 121(3). Classifications are based on
    the Tribunal's findings regarding natural conditions.                     *)
@@ -5760,7 +5858,7 @@ Proof. unfold scs_lon_span_full, scs_lon_max, scs_lon_min. lra. Qed.
 (* A baseline encloses a feature when the feature lies within its interior.  *)
 
 Definition baseline_encloses (baseline : Polygon) (feature : Point) : Prop :=
-  True.  (* Abstract predicate; concrete implementation requires point-in-polygon test *)
+  point_in_polygon feature baseline.
 
 (* A baseline encloses all disputed features.                                *)
 
@@ -5774,10 +5872,9 @@ Definition encloses_all_scs_features (baseline : Polygon) : Prop :=
   baseline_encloses baseline gaven_reef /\
   baseline_encloses baseline hughes_reef.
 
-(* Minimum enclosed area: any baseline enclosing all features must span at
-   least the bounding box of those features.                                 *)
+(* Minimum enclosed area from Mathematica GeoArea (4-12°N, 109-118°E).       *)
 
-Definition min_enclosing_area_sq_nm : R := 70000.
+Definition min_enclosing_area_sq_nm : R := 256236.
 
 (* Maximum land area of all features combined.                               *)
 
@@ -6176,9 +6273,10 @@ Proof.
   pose proof sqrt_3_gt_1. lra.
 Qed.
 
-(* Interval for R_earth: [3440, 3441] nautical miles.                        *)
+(* Interval for R_earth: [3440.06, 3440.07] nautical miles.
+   Mathematica: N[6371/1.852, 15] = 3440.0647948164146                        *)
 
-Definition R_earth_interval : Interval := mkInterval 3440 3441.
+Definition R_earth_interval : Interval := mkInterval (344006/100) (344007/100).
 
 (* R_earth is contained in its interval.                                     *)
 
@@ -6204,13 +6302,13 @@ Proof.
   - exact R_earth_in_interval.
 Qed.
 
-(* The R_earth² interval bounds (explicit numerical form).                   *)
+(* The R_earth² interval bounds (explicit numerical form).
+   R_earth = 3440.065, so R_earth² = 11834046.804225
+   Bounds derived from 3440 < R_earth < 3441                                  *)
 
-Lemma R_earth_sqr_bounds : 11833600 <= Rsqr R_earth <= 11840481.
+Lemma R_earth_sqr_bounds : 11833600 < Rsqr R_earth < 11840481.
 Proof.
-  pose proof R_earth_sqr_in_interval as H.
-  unfold in_interval, R_earth_sqr_interval, iv_mult_pos, R_earth_interval in H.
-  simpl in H. lra.
+  unfold Rsqr, R_earth, R_earth_default. split; nra.
 Qed.
 
 (* π is positive.                                                            *)
@@ -6252,6 +6350,20 @@ Proof.
   split.
   - exact PI_gt_3.
   - exact PI_4.
+Qed.
+
+(* Tight upper bound on π using Leibniz series (PI_ineq).
+   PI_ineq N: sum(0..2N+1) <= π/4 <= sum(0..2N)
+   For N=2: π/4 <= sum(0..4) = 1 - 1/3 + 1/5 - 1/7 + 1/9 = 263/315
+   Therefore π <= 4 × 263/315 = 1052/315 ≈ 3.340                           *)
+
+Lemma PI_lt_34 : PI < 34/10.
+Proof.
+  pose proof (PI_ineq 2) as [_ Hupper].
+  simpl in Hupper.
+  unfold tg_alt, PI_tg, Ratan_seq in Hupper.
+  simpl in Hupper.
+  lra.
 Qed.
 
 (* Rational lower bound: π > 22/8 = 2.75. Weaker but useful.                 *)
@@ -6482,8 +6594,9 @@ Qed.
    Δλ = 4° = 4π/180 rad
    φ_north = 11.5°, φ_south = 8.5°
    sin(11.5°) - sin(8.5°) ≈ 0.199 - 0.148 = 0.051
+   Mathematica: 0.05155852328758656
 
-   Conservative lower bound: the area is at least R² × Δλ × 0.04.            *)
+   Proven lower bound: the area is at least R² × Δλ × 0.048.                  *)
 
 (* The latitude values in radians are bounded.                               *)
 
@@ -6495,6 +6608,19 @@ Proof.
   assert (H2 : 11.5 * 4 / 180 = 23/90) by lra.
   lra.
 Qed.
+
+(* Tighter bound using PI < 3.4 (from PI_lt_34).
+   11.5 × 3.4 / 180 = 0.2172 < 22/100                                       *)
+
+Lemma scs_lat_north_rad_tight : scs_lat_north_rad < 22/100.
+Proof.
+  unfold scs_lat_north_rad, scs_lat_north_deg, deg_to_rad.
+  pose proof PI_lt_34 as Hpi.
+  assert (H : 11.5 * PI / 180 < 11.5 * (34/10) / 180) by lra.
+  assert (H2 : 11.5 * (34/10) / 180 < 22/100) by lra.
+  lra.
+Qed.
+
 
 Lemma scs_lat_south_rad_bound : scs_lat_south_rad <= 17/90.
 Proof.
@@ -6558,29 +6684,30 @@ Qed.
 (* Cosine is bounded below for small angles: cos(x) > 1 - x²/2.
    This is already proven as cos_lower_bound in the file.                    *)
 
-(* Cosine of the north latitude is greater than 0.96.
-   With scs_lat_north_rad <= 23/90 ≈ 0.256:
-   x² <= (23/90)² = 529/8100 ≈ 0.0653
-   x²/2 <= 0.0327
-   cos(x) > 1 - 0.0327 > 0.96                                                *)
+(* Cosine of the north latitude is greater than 0.97.
+   With scs_lat_north_rad < 22/100 (from PI_lt_34):
+   x² < (22/100)² = 484/10000 = 0.0484
+   x²/2 < 0.0242
+   cos(x) > 1 - 0.0242 = 0.9758 > 0.97
+   Mathematica: cos(11.5°) = 0.97992470462                                   *)
 
-Lemma scs_cos_north_gt_096 : cos scs_lat_north_rad > 96/100.
+Lemma scs_cos_north_gt_097 : cos scs_lat_north_rad > 97/100.
 Proof.
   pose proof scs_lat_south_rad_pos.
   pose proof scs_lat_south_lt_north.
   pose proof scs_lat_north_lt_pi2.
-  pose proof scs_lat_north_rad_bound as Hbound.
+  pose proof scs_lat_north_rad_tight as Hbound.
   pose proof PI_RGT_0.
   assert (Hpos : scs_lat_north_rad > 0) by lra.
   assert (Hlt_pi : scs_lat_north_rad < PI) by lra.
   pose proof (cos_lower_bound scs_lat_north_rad (conj Hpos Hlt_pi)) as Hcos.
-  assert (Hsqr_bound : scs_lat_north_rad * scs_lat_north_rad <= (23/90) * (23/90)).
+  assert (Hsqr_bound : scs_lat_north_rad * scs_lat_north_rad < (22/100) * (22/100)).
   { assert (Hnn : scs_lat_north_rad >= 0) by lra.
-    assert (H2390 : (23:R)/90 >= 0) by lra.
-    apply Rmult_le_compat; lra. }
-  assert (H2390_sqr : (23/90) * (23/90) = 529/8100) by lra.
-  assert (Hsqr_val : 529/8100 < 8/100) by lra.
-  assert (Hsqr_half : scs_lat_north_rad * scs_lat_north_rad / 2 < 4/100) by lra.
+    assert (H22 : (22:R)/100 > 0) by lra.
+    nra. }
+  assert (H22_sqr : (22/100) * (22/100) = 484/10000) by lra.
+  assert (Hsqr_half : scs_lat_north_rad * scs_lat_north_rad / 2 < 484/20000) by lra.
+  assert (Hval : 484/20000 < 3/100) by lra.
   unfold Rsqr in Hcos.
   lra.
 Qed.
@@ -6607,16 +6734,17 @@ Proof.
   lra.
 Qed.
 
-(* Main result: sin(11.5°) - sin(8.5°) >= 0.04.
+(* Main result: sin(11.5°) - sin(8.5°) >= 0.048.
    Proof: Using mean value theorem:
    sin(11.5°) - sin(8.5°) >= (11.5° - 8.5°) * cos(11.5°)
                            = 3° * cos(11.5°)
                            = (π/60) * cos(11.5°)
-                           > (π/60) * 0.96
-                           > (3/60) * 0.96
-                           = 0.048 > 0.04                                    *)
+                           > (π/60) * 0.97
+                           > (3/60) * 0.97
+                           = 0.0485 > 0.048
+   Mathematica: N[Sin[11.5 Degree] - Sin[8.5 Degree], 20] = 0.05155852328758656 *)
 
-Lemma scs_sin_diff_ge_004 : sin scs_lat_north_rad - sin scs_lat_south_rad >= 0.04.
+Lemma scs_sin_diff_ge_0048 : sin scs_lat_north_rad - sin scs_lat_south_rad >= 0.048.
 Proof.
   pose proof scs_lat_south_rad_pos as Hs_pos.
   pose proof scs_lat_north_lt_pi2 as Hn_lt.
@@ -6625,29 +6753,29 @@ Proof.
   assert (Hs_nonneg : 0 <= scs_lat_south_rad) by lra.
   pose proof (sin_diff_mvt_lower scs_lat_south_rad scs_lat_north_rad
               Hs_nonneg Hs_lt_n Hn_lt) as Hmvt.
-  pose proof scs_cos_north_gt_096 as Hcos.
+  pose proof scs_cos_north_gt_097 as Hcos.
   pose proof scs_lat_diff_exact as Hdiff.
   pose proof pi_over_60_lower as Hpi60.
   assert (Hbound : sin scs_lat_north_rad - sin scs_lat_south_rad >=
                    (scs_lat_north_rad - scs_lat_south_rad) * cos scs_lat_north_rad).
   { exact Hmvt. }
   rewrite Hdiff in Hbound.
-  assert (Hproduct : PI / 60 * cos scs_lat_north_rad > PI / 60 * (96/100)).
+  assert (Hproduct : PI / 60 * cos scs_lat_north_rad > PI / 60 * (97/100)).
   { apply Rmult_gt_compat_l; lra. }
-  assert (Hpi_bound : PI / 60 * (96/100) > 1/20 * (96/100)).
+  assert (Hpi_bound : PI / 60 * (97/100) > 1/20 * (97/100)).
   { apply Rmult_gt_compat_r; lra. }
-  assert (Hval : 1/20 * (96/100) = 48/1000) by lra.
-  assert (H48 : 48/1000 > 0.04) by lra.
+  assert (Hval : 1/20 * (97/100) = 97/2000) by lra.
+  assert (H48 : 97/2000 > 48/1000) by lra.
   lra.
 Qed.
 
-Definition min_baseline_area_factor : R := 0.04.
+Definition min_baseline_area_factor : R := 0.048.
 
 Definition min_baseline_area : R :=
   Rsqr R_earth * baseline_lon_span_rad * min_baseline_area_factor.
 
 (* Lower bound on baseline area using only π > 0.
-   min_baseline_area = R_earth² × 4 × π / 180 × 0.04 ≈ 10519.15 × π          *)
+   min_baseline_area = R_earth² × 4 × π / 180 × 0.048 ≈ 12622.98 × π         *)
 
 Definition baseline_area_coefficient : R :=
   Rsqr R_earth * (4 / 180) * min_baseline_area_factor.
@@ -6660,9 +6788,9 @@ Proof.
   unfold Rsqr. field.
 Qed.
 
-(* The baseline area coefficient exceeds 10000.                              *)
+(* The baseline area coefficient exceeds 12000 (updated with 0.048 factor).  *)
 
-Lemma baseline_coefficient_large : baseline_area_coefficient > 10000.
+Lemma baseline_coefficient_large : baseline_area_coefficient > 12000.
 Proof.
   unfold baseline_area_coefficient, min_baseline_area_factor, R_earth, R_earth_default.
   unfold Rsqr. lra.
@@ -6673,7 +6801,7 @@ Qed.
 Lemma min_baseline_area_positive : min_baseline_area > 0.
 Proof.
   rewrite baseline_area_as_pi_multiple.
-  assert (Hcoef : baseline_area_coefficient > 10000) by exact baseline_coefficient_large.
+  assert (Hcoef : baseline_area_coefficient > 12000) by exact baseline_coefficient_large.
   assert (Hpi : PI > 0) by exact PI_RGT_0.
   nra.
 Qed.
@@ -6855,7 +6983,7 @@ Theorem spratly_ratio_exceeds_bound :
 Proof.
   assert (Hpi_pos : PI > 0) by exact PI_RGT_0.
   assert (Hpi_le : PI <= 4) by exact PI_4.
-  assert (Hcoef_base : baseline_area_coefficient > 10000) by exact baseline_coefficient_large.
+  assert (Hcoef_base : baseline_area_coefficient > 12000) by exact baseline_coefficient_large.
   assert (Hcoef_feat : feature_area_coefficient < 0.001) by exact feature_coefficient_small.
   assert (Hcoef_feat_pos : feature_area_coefficient > 0).
   { unfold feature_area_coefficient, feature_size_deg, R_earth, R_earth_default. unfold Rsqr. lra. }
@@ -6879,7 +7007,7 @@ Proof.
   assert (Hpi_le : PI <= 4) by exact PI_4.
   rewrite baseline_area_as_pi_multiple.
   rewrite max_feature_as_pi_sqr.
-  assert (Hcoef_base : baseline_area_coefficient > 10000) by exact baseline_coefficient_large.
+  assert (Hcoef_base : baseline_area_coefficient > 12000) by exact baseline_coefficient_large.
   assert (Hcoef_feat : feature_area_coefficient < 0.001) by exact feature_coefficient_small.
   nra.
 Qed.
@@ -7186,6 +7314,49 @@ Proof.
   apply sin_increasing_1; lra.
 Qed.
 
+(* Tighter lower bound on sin_lat_diff using MVT.
+   sin(12°) - sin(4°) >= (12° - 4°) × cos(12°) = 8° × cos(12°)
+   With 8° = 8π/180 rad and cos(12°) > 0.97 (from cos_lower_bound):
+   sin_lat_diff >= (8π/180) × 0.97 > (8 × 3 / 180) × 0.97 = 0.129
+   Mathematica: sin(12°) - sin(4°) = 0.13815521707363403                     *)
+
+Lemma sin_lat_diff_gt_012 : sin_lat_diff > 12/100.
+Proof.
+  unfold sin_lat_diff, spratly_lat_north_rad, spratly_lat_south_rad.
+  unfold deg_to_rad, spratly_lat_north, spratly_lat_south.
+  pose proof PI_RGT_0 as Hpi.
+  pose proof PI_gt_3 as Hpi3.
+  assert (H4_pos : 4 * PI / 180 > 0) by nra.
+  assert (H12_pos : 12 * PI / 180 > 0) by nra.
+  assert (H4_lt_12 : 4 * PI / 180 < 12 * PI / 180) by nra.
+  assert (H12_lt_pi2 : 12 * PI / 180 < PI / 2).
+  { pose proof PI_4 as Hpi4. nra. }
+  pose proof (sin_diff_mvt_lower (4 * PI / 180) (12 * PI / 180)) as Hmvt.
+  assert (Hmvt_applied : sin (12 * PI / 180) - sin (4 * PI / 180) >=
+                          (12 * PI / 180 - 4 * PI / 180) * cos (12 * PI / 180)).
+  { apply Hmvt; lra. }
+  assert (Hdiff : 12 * PI / 180 - 4 * PI / 180 = 8 * PI / 180) by lra.
+  rewrite Hdiff in Hmvt_applied.
+  assert (Hcos_bound : cos (12 * PI / 180) > 97/100).
+  { pose proof PI_lt_34 as Hpi34.
+    assert (H12_tight : 12 * PI / 180 < 12 * (34/10) / 180) by lra.
+    assert (H12_lt_023 : 12 * PI / 180 < 23/100) by lra.
+    assert (Hlt_pi : 12 * PI / 180 < PI) by lra.
+    pose proof (cos_lower_bound (12 * PI / 180) (conj H12_pos Hlt_pi)) as Hcos.
+    assert (Hsqr : (12 * PI / 180) * (12 * PI / 180) < (23/100) * (23/100)) by nra.
+    assert (Hsqr_val : (23/100) * (23/100) = 529/10000) by lra.
+    assert (Hsqr_half : (12 * PI / 180) * (12 * PI / 180) / 2 < 529/20000) by lra.
+    assert (Hbound : 529/20000 < 3/100) by lra.
+    unfold Rsqr in Hcos. lra. }
+  assert (Hprod : 8 * PI / 180 * cos (12 * PI / 180) > 8 * PI / 180 * (97/100)).
+  { apply Rmult_gt_compat_l; lra. }
+  assert (Hpi_term : 8 * PI / 180 * (97/100) > 8 * 3 / 180 * (97/100)).
+  { apply Rmult_gt_compat_r; [lra | nra]. }
+  assert (Hval : 8 * 3 / 180 * (97/100) = 2328/18000) by lra.
+  assert (H12_100 : 2328/18000 > 12/100) by lra.
+  lra.
+Qed.
+
 (* The minimum enclosed area in square nautical miles:
    A_min = R_earth² × Δλ_rad × (sin φ_north - sin φ_south)
    Expressed as a coefficient times π for tractable bounds.                  *)
@@ -7245,16 +7416,8 @@ Definition spratly_min_ratio : R :=
    π > 3
    sin_diff > 0
 
-   For sin(12°) - sin(4°), using sin(x) ≥ 2x/π for x ∈ [0, π/2]:
-   sin(12°) ≥ 24/180 = 0.1333
-   sin(4°) ≤ 4π/180 < 0.089 (using π < 4)
-   sin(12°) - sin(4°) > 0.044
-
-   Direct calculation:
-   min_enclosed_area = R_earth² × (9π/180) × sin_diff
-                     > 3440² × (9 × 3 / 180) × 0.04
-                     > 11,833,600 × 0.15 × 0.04
-                     > 70,000 sq nm
+   Mathematica: sin(12°) - sin(4°) = 0.13815521707363403
+   Mathematica GeoArea[4-12°N, 109-118°E] = 256,236.53 sq nm
 
    This vastly exceeds any possible land area.                               *)
 
@@ -8631,11 +8794,138 @@ Admitted.
 
 Lemma distance_centroid_v1_pos : distance test_centroid test_triangle_v1 > 0.
 Proof.
-Admitted.
+  unfold distance, test_centroid, test_triangle_v1.
+  simpl phi. simpl lambda.
+  assert (HR : R_earth > 0).
+  { unfold R_earth, R_earth_default. lra. }
+  replace (0 - 1/2) with (-(1/2)) by lra.
+  replace (0 - 1/3) with (-(1/3)) by lra.
+  rewrite (hav_neg (1/2)).
+  rewrite (hav_neg (1/3)).
+  assert (Hhav_pos : hav (1/2) > 0) by exact hav_half_pos.
+  assert (Hcos_0 : cos 0 = 1) by exact cos_0.
+  assert (Hcos_half : cos (1/2) > 0).
+  { apply cos_gt_0; pose proof one_lt_PI; lra. }
+  assert (Ha_pos : hav (1/2) + cos (1/2) * cos 0 * hav (1/3) > 0).
+  { rewrite Hcos_0. rewrite Rmult_1_r.
+    assert (Hhav_third_ge : hav (1/3) >= 0).
+    { unfold hav, Rsqr. apply Rle_ge. apply Rle_0_sqr. }
+    nra. }
+  assert (Hsqrt_pos : sqrt (hav (1/2) + cos (1/2) * cos 0 * hav (1/3)) > 0).
+  { apply sqrt_lt_R0. exact Ha_pos. }
+  assert (Ha_lt_1 : hav (1/2) + cos (1/2) * cos 0 * hav (1/3) < 1).
+  { rewrite Hcos_0, Rmult_1_r.
+    pose proof hav_half_lt_quarter as Hhav_half_lt.
+    pose proof hav_third_lt_quarter as Hhav_third_lt.
+    pose proof COS_bound (1/2) as [_ Hcos_le].
+    nra. }
+  assert (Hsqrt_lt_1 : sqrt (hav (1/2) + cos (1/2) * cos 0 * hav (1/3)) < 1).
+  { assert (Hcomb : 0 <= hav (1/2) + cos (1/2) * cos 0 * hav (1/3) < 1).
+    { split. apply Rlt_le. exact Ha_pos. exact Ha_lt_1. }
+    apply sqrt_lt_1_alt in Hcomb.
+    rewrite sqrt_1 in Hcomb. exact Hcomb. }
+  assert (Hasin_pos : asin (sqrt (hav (1/2) + cos (1/2) * cos 0 * hav (1/3))) > 0).
+  { set (s := sqrt (hav (1/2) + cos (1/2) * cos 0 * hav (1/3))) in *.
+    assert (Hs_bounds : 0 <= s <= 1).
+    { split. apply sqrt_pos. apply Rlt_le. exact Hsqrt_lt_1. }
+    assert (Hasin_nonneg : 0 <= asin s) by (apply asin_nonneg_on_0_1; exact Hs_bounds).
+    assert (Hasin_ne_0 : asin s <> 0).
+    { intro Heq. apply asin_eq_0 in Heq; [| lra].
+      assert (Hcontra : s > 0) by exact Hsqrt_pos. lra. }
+    lra. }
+  nra.
+Qed.
 
 Lemma distance_centroid_v2_pos : distance test_centroid test_triangle_v2 > 0.
 Proof.
-Admitted.
+  unfold distance, test_centroid, test_triangle_v2.
+  simpl phi. simpl lambda.
+  assert (HR : R_earth > 0).
+  { unfold R_earth, R_earth_default. lra. }
+  replace (1 - 1/2) with (1/2) by lra.
+  replace (0 - 1/3) with (-(1/3)) by lra.
+  rewrite (hav_neg (1/3)).
+  assert (Hhav_pos : hav (1/2) > 0).
+  { unfold hav.
+    replace (1/2 / 2) with (1/4) by field.
+    assert (Hsin : sin (1/4) > 0).
+    { apply sin_gt_0; [lra | pose proof one_lt_PI; lra]. }
+    unfold Rsqr.
+    apply Rmult_gt_0_compat; exact Hsin. }
+  assert (Hcos_1 : cos 1 > 0).
+  { apply cos_gt_0.
+    - pose proof PI_RGT_0. lra.
+    - pose proof PI2_3_2. unfold PI2 in *. lra. }
+  assert (Hcos_half : cos (1/2) > 0).
+  { apply cos_gt_0.
+    - pose proof PI_RGT_0. lra.
+    - pose proof PI2_3_2. unfold PI2 in *. lra. }
+  assert (Ha_pos : hav (1/2) + cos (1/2) * cos 1 * hav (1/3) > 0).
+  { assert (Hhav_third_ge : hav (1/3) >= 0).
+    { unfold hav, Rsqr. apply Rle_ge. apply Rle_0_sqr. }
+    assert (Hcos_prod : cos (1/2) * cos 1 >= 0).
+    { apply Rle_ge. apply Rmult_le_pos; apply Rlt_le; assumption. }
+    assert (Hterm2_ge : cos (1/2) * cos 1 * hav (1/3) >= 0).
+    { apply Rle_ge. apply Rmult_le_pos; apply Rge_le; assumption. }
+    lra. }
+  assert (Hsqrt_pos : sqrt (hav (1/2) + cos (1/2) * cos 1 * hav (1/3)) > 0).
+  { apply sqrt_lt_R0. exact Ha_pos. }
+  assert (Ha_lt_1 : hav (1/2) + cos (1/2) * cos 1 * hav (1/3) < 1).
+  { assert (Hhav_half_lt : hav (1/2) < 1/4).
+    { unfold hav.
+      replace (1/2 / 2) with (1/4) by field.
+      assert (Hsin_bd : sin (1/4) < 1/4) by (apply sin_lt_x; lra).
+      assert (Hsin_ge : sin (1/4) >= 0).
+      { apply Rle_ge. apply sin_ge_0; [lra | pose proof one_lt_PI; lra]. }
+      unfold Rsqr.
+      assert (Hsq : sin (1/4) * sin (1/4) < (1/4) * (1/4)).
+      { apply Rmult_le_0_lt_compat; lra. }
+      lra. }
+    assert (Hhav_third_lt : hav (1/3) < 1/4).
+    { unfold hav.
+      replace (1/3 / 2) with (1/6) by field.
+      assert (Hsin_bd : sin (1/6) < 1/6) by (apply sin_lt_x; lra).
+      assert (Hsin_ge : sin (1/6) >= 0).
+      { apply Rle_ge. apply sin_ge_0; [lra | pose proof one_lt_PI; lra]. }
+      unfold Rsqr.
+      assert (Hsq : sin (1/6) * sin (1/6) < (1/6) * (1/6)).
+      { apply Rmult_le_0_lt_compat; lra. }
+      lra. }
+    assert (Hcos_le1 : cos (1/2) <= 1) by apply COS_bound.
+    assert (Hcos_le2 : cos 1 <= 1) by apply COS_bound.
+    assert (Hcos_ge1 : cos (1/2) >= 0).
+    { apply Rle_ge. apply cos_ge_0; pose proof PI_RGT_0; pose proof PI2_3_2; unfold PI2 in *; lra. }
+    assert (Hcos_ge2 : cos 1 >= 0).
+    { apply Rle_ge. apply cos_ge_0; pose proof PI_RGT_0; pose proof PI2_3_2; unfold PI2 in *; lra. }
+    assert (Hhav_third_ge : hav (1/3) >= 0).
+    { unfold hav, Rsqr. apply Rle_ge. apply Rle_0_sqr. }
+    assert (Hcos_prod_le : cos (1/2) * cos 1 <= 1).
+    { assert (H1 : cos (1/2) * cos 1 <= 1 * 1).
+      { apply Rmult_le_compat; lra. }
+      lra. }
+    assert (Hcos_prod_ge : cos (1/2) * cos 1 >= 0).
+    { apply Rle_ge. apply Rmult_le_pos; lra. }
+    assert (Hterm2_lt : cos (1/2) * cos 1 * hav (1/3) < 1/4).
+    { assert (Hle : cos (1/2) * cos 1 * hav (1/3) <= 1 * hav (1/3)).
+      { apply Rmult_le_compat_r; lra. }
+      lra. }
+    lra. }
+  assert (Hsqrt_lt_1 : sqrt (hav (1/2) + cos (1/2) * cos 1 * hav (1/3)) < 1).
+  { assert (Hcomb : 0 <= hav (1/2) + cos (1/2) * cos 1 * hav (1/3) < 1).
+    { split. apply Rlt_le. exact Ha_pos. exact Ha_lt_1. }
+    apply sqrt_lt_1_alt in Hcomb.
+    rewrite sqrt_1 in Hcomb. exact Hcomb. }
+  assert (Hasin_pos : asin (sqrt (hav (1/2) + cos (1/2) * cos 1 * hav (1/3))) > 0).
+  { set (s := sqrt (hav (1/2) + cos (1/2) * cos 1 * hav (1/3))) in *.
+    assert (Hs_bounds : 0 <= s <= 1).
+    { split. apply sqrt_pos. apply Rlt_le. exact Hsqrt_lt_1. }
+    assert (Hasin_nonneg : 0 <= asin s) by (apply asin_nonneg_on_0_1; exact Hs_bounds).
+    assert (Hasin_ne_0 : asin s <> 0).
+    { intro Heq. apply asin_eq_0 in Heq; [| lra].
+      assert (Hcontra : s > 0) by exact Hsqrt_pos. lra. }
+    lra. }
+  nra.
+Qed.
 
 Lemma distance_v1_v2_pos : distance test_triangle_v1 test_triangle_v2 > 0.
 Proof.
@@ -8841,8 +9131,7 @@ Proof.
     pose proof PI_RGT_0. nra. }
   assert (Hfactor : min_baseline_area_factor > 0).
   { unfold min_baseline_area_factor. lra. }
-  pose proof scs_sin_diff_ge_004 as Hsin_bound.
-  unfold min_baseline_area_factor in Hsin_bound.
+  pose proof scs_sin_diff_ge_0048 as Hsin_bound.
   apply Rmult_le_compat_l.
   - apply Rmult_le_pos; [apply Rlt_le; exact HR | apply Rlt_le; exact Hlon].
   - apply Rge_le. exact Hsin_bound.
@@ -9137,9 +9426,21 @@ Definition enclosed_sea_cooperation (states : list StateId) : Prop :=
 (*                                                                            *)
 (******************************************************************************)
 
-(* The Area is the seabed beyond national jurisdiction.                      *)
+(* The Area is the seabed beyond national jurisdiction. A point is in the
+   Area if it lies beyond the maximum extended continental shelf distance
+   (350nm) from all defined reference features.                               *)
 
-Definition Area : Region := fun p => True.
+Definition beyond_all_jurisdiction (p : Point) : Prop :=
+  distance p scarborough_shoal > nm_extended_shelf_max /\
+  distance p mischief_reef > nm_extended_shelf_max /\
+  distance p subi_reef > nm_extended_shelf_max /\
+  distance p fiery_cross_reef > nm_extended_shelf_max /\
+  distance p johnson_reef > nm_extended_shelf_max /\
+  distance p cuarteron_reef > nm_extended_shelf_max /\
+  distance p gaven_reef > nm_extended_shelf_max /\
+  distance p hughes_reef > nm_extended_shelf_max.
+
+Definition Area : Region := beyond_all_jurisdiction.
 
 (* The Area is common heritage: no state may claim sovereignty.              *)
 
