@@ -28,6 +28,7 @@ From Coq Require Import Bool.
 From Coq Require Import Lia.
 From Coq Require Import Lra.
 From Coq Require Import Classical.
+From Interval Require Import Tactic.
 
 Import ListNotations.
 
@@ -8437,24 +8438,80 @@ Qed.
 
 Lemma angle_obtuse_when_far_edge : forall da db dab,
   0 < da -> 0 < db -> 0 < dab ->
+  dab < PI / 2 * R_earth ->
   Rsqr da + Rsqr db < Rsqr dab ->
   acos (law_of_cosines_arg da db dab) > PI / 2.
 Proof.
-  intros da db dab Hda Hdb Hdab Hineq.
+  intros da db dab Hda Hdb Hdab Hdab_bound Hineq.
   apply law_of_cosines_arg_neg_implies_angle_gt_PI2; [exact Hda | exact Hdb |].
   unfold law_of_cosines_arg, spherical_cosine_arg, distance_to_central_angle.
   set (ca := da / R_earth).
   set (cb := db / R_earth).
   set (cab := dab / R_earth).
+  assert (HR_pos : R_earth > 0).
+  { unfold R_earth, R_earth_default. lra. }
   assert (Hca_pos : ca > 0).
-  { unfold ca, R_earth, R_earth_default. apply Rdiv_lt_0_compat; lra. }
+  { unfold ca. apply Rdiv_lt_0_compat; lra. }
   assert (Hcb_pos : cb > 0).
-  { unfold cb, R_earth, R_earth_default. apply Rdiv_lt_0_compat; lra. }
+  { unfold cb. apply Rdiv_lt_0_compat; lra. }
   assert (Hcab_pos : cab > 0).
-  { unfold cab, R_earth, R_earth_default. apply Rdiv_lt_0_compat; lra. }
+  { unfold cab. apply Rdiv_lt_0_compat; lra. }
+  assert (Hcab_lt_pi2 : cab < PI / 2).
+  { unfold cab.
+    unfold Rdiv.
+    assert (Hgoal : dab * / R_earth < PI / 2).
+    { apply Rmult_lt_reg_r with R_earth; [exact HR_pos |].
+      rewrite Rmult_assoc, Rinv_l, Rmult_1_r; [| lra].
+      assert (Hpi_comm : PI / 2 * R_earth = R_earth * (PI / 2)) by ring.
+      lra. }
+    exact Hgoal. }
+  assert (Hcab_lt_pi : cab < PI).
+  { pose proof PI_RGT_0. lra. }
   assert (Hcab_gt : Rsqr ca + Rsqr cb < Rsqr cab).
-  { unfold ca, cb, cab, R_earth, R_earth_default, Rsqr in *. nra. }
+  { unfold ca, cb, cab, Rsqr.
+    unfold Rdiv.
+    assert (Hrinv_pos : / R_earth > 0) by (apply Rinv_0_lt_compat; exact HR_pos).
+    assert (Hrinv_sqr : / R_earth * / R_earth > 0) by (apply Rmult_gt_0_compat; exact Hrinv_pos).
+    assert (Hscale : forall x, (x * / R_earth) * (x * / R_earth) = x * x * (/ R_earth * / R_earth)).
+    { intro x. ring. }
+    rewrite !Hscale.
+    assert (Hdistrib : da * da * (/ R_earth * / R_earth) + db * db * (/ R_earth * / R_earth) =
+                       (da * da + db * db) * (/ R_earth * / R_earth)) by ring.
+    rewrite Hdistrib.
+    apply Rmult_lt_compat_r; [exact Hrinv_sqr |].
+    unfold Rsqr in Hineq. exact Hineq. }
+  assert (Hca_lt : ca < cab).
+  { unfold Rsqr in Hcab_gt. nra. }
+  assert (Hcb_lt : cb < cab).
+  { unfold Rsqr in Hcab_gt. nra. }
+  assert (Hca_lt_pi2 : ca < PI / 2) by lra.
+  assert (Hcb_lt_pi2 : cb < PI / 2) by lra.
+  assert (Hca_lt_pi : ca < PI).
+  { pose proof PI_RGT_0. lra. }
+  assert (Hcb_lt_pi : cb < PI).
+  { pose proof PI_RGT_0. lra. }
   pose proof (spherical_cosine_arg_bounds ca cb cab) as [Hlo Hhi].
+  unfold spherical_cosine_arg.
+  set (num := cos cab - cos ca * cos cb).
+  set (denom := sin ca * sin cb).
+  assert (Hsin_ca_pos : sin ca > 0).
+  { apply sin_gt_0; [exact Hca_pos | lra]. }
+  assert (Hsin_cb_pos : sin cb > 0).
+  { apply sin_gt_0; [exact Hcb_pos | lra]. }
+  assert (Hdenom_pos : denom > 0).
+  { unfold denom. apply Rmult_gt_0_compat; assumption. }
+  assert (Habs_denom : Rabs denom = denom).
+  { apply Rabs_right. lra. }
+  assert (Hmax_denom : Rmax (Rabs denom) 1e-10 = Rabs denom \/ Rmax (Rabs denom) 1e-10 = 1e-10).
+  { unfold Rmax. destruct (Rle_dec (Rabs denom) 1e-10); [right | left]; reflexivity. }
+  assert (Hcos_ca_pos : cos ca > 0).
+  { apply cos_gt_0.
+    - pose proof PI_RGT_0. lra.
+    - exact Hca_lt_pi2. }
+  assert (Hcos_cb_pos : cos cb > 0).
+  { apply cos_gt_0.
+    - pose proof PI_RGT_0. lra.
+    - exact Hcb_lt_pi2. }
 Admitted.
 
 (* For positive x, acos(x) < π/2.                                            *)
@@ -8932,6 +8989,15 @@ Proof.
   rewrite distance_v1_v2_value. unfold R_earth, R_earth_default. lra.
 Qed.
 
+Lemma distance_v1_v2_lt_pi2_R :
+  distance test_triangle_v1 test_triangle_v2 < PI / 2 * R_earth.
+Proof.
+  rewrite distance_v1_v2_value.
+  assert (HR : R_earth > 0) by (unfold R_earth, R_earth_default; lra).
+  assert (Hpi : PI > 3) by exact PI_gt_3.
+  nra.
+Qed.
+
 Lemma centroid_angle_v1v2_obtuse :
   segment_angle test_centroid test_triangle_v1 test_triangle_v2 > PI / 2.
 Proof.
@@ -8939,6 +9005,7 @@ Proof.
   - exact distance_centroid_v1_pos.
   - exact distance_centroid_v2_pos.
   - exact distance_v1_v2_pos.
+  - exact distance_v1_v2_lt_pi2_R.
   - exact centroid_distances_obtuse_condition.
 Qed.
 
