@@ -7964,17 +7964,21 @@ Definition incompatible_with_unclos (hc : HistoricClaim) (zone : Region) : Prop 
 Definition claim_extinguished (hc : HistoricClaim) (s : StateId) : Prop :=
   hc_date_of_origin hc < state_ratification_date s.
 
+Definition claim_operative (hc : HistoricClaim) (s : StateId) : Prop :=
+  hc_date_of_origin hc >= state_ratification_date s.
+
 (* The supersession theorem: UNCLOS ratification extinguishes incompatible
    prior claims to resources in maritime zones. After ratification, a state
    cannot assert historic rights that conflict with the Convention.          *)
 
-Theorem historic_rights_superseded : forall hc s zone,
-  incompatible_with_unclos hc zone ->
+Theorem historic_rights_superseded : forall hc s,
   claim_extinguished hc s ->
-  forall p, contains (hc_region hc) p -> contains zone p -> True.
+  ~ claim_operative hc s.
 Proof.
-  intros hc s zone Hincompat Hextinct p Hhc Hzone.
-  exact I.
+  intros hc s Hext Hop.
+  unfold claim_extinguished in Hext.
+  unfold claim_operative in Hop.
+  lra.
 Qed.
 
 (* The claim becomes legally void: the historic right provides no basis
@@ -8011,6 +8015,13 @@ Proof.
   unfold claim_extinguished, nine_dash_line_claim, state_ratification_date.
   unfold unclos_entry_into_force.
   exact roc_map_before_unclos.
+Qed.
+
+Theorem nine_dash_line_not_operative :
+  ~ claim_operative nine_dash_line_claim china.
+Proof.
+  apply historic_rights_superseded.
+  exact nine_dash_line_superseded.
 Qed.
 
 (******************************************************************************)
