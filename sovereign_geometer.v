@@ -23,17 +23,16 @@
 (*                                                                            *)
 (******************************************************************************)
 
-From Coq Require Import Reals.
-From Coq Require Import Rtrigo.
-From Coq Require Import Rtrigo_facts.
-From Coq Require Import Ratan.
-From Coq Require Import Rsqrt_def.
-From Coq Require Import List.
-From Coq Require Import Bool.
-From Coq Require Import Lia.
-From Coq Require Import Lra.
-From Coq Require Import Classical.
-From Interval Require Import Tactic.
+From Stdlib Require Import Reals.
+From Stdlib Require Import Rtrigo.
+From Stdlib Require Import Rtrigo_facts.
+From Stdlib Require Import Ratan.
+From Stdlib Require Import Rsqrt_def.
+From Stdlib Require Import List.
+From Stdlib Require Import Bool.
+From Stdlib Require Import Lia.
+From Stdlib Require Import Lra.
+From Stdlib Require Import Classical.
 
 Import ListNotations.
 
