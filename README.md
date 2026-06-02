@@ -42,12 +42,12 @@ The Tribunal's jurisdiction is proven despite China's 2006 Article 298 declarati
 
 ## Axiom Status
 
-The formalization contains 3 axioms and 3 admitted lemmas, all confined to winding-number algorithm validation on synthetic test data. **100% of substantive legal claims are axiom-free.** The main theorems depend only on Coq's standard library and the Reals axiomatization.
+The formalization contains no axioms and no admitted lemmas. Every theorem, including the winding-number point-in-polygon test cases on synthetic data, depends only on Coq's standard library and the classical Reals axiomatization.
 
 ## Files
 
 ```
-sovereign_geometer.v    Coq proofs (9,942 lines)
+sovereign_geometer.v    Coq proofs (10,918 lines)
 ```
 
 ## Key Theorems

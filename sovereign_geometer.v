@@ -9779,22 +9779,324 @@ Proof.
   assert (sin (1/2) >= 23/48) by lra. assert (sin (1/2) >= 0) by lra. nra.
 Qed.
 
-Lemma cos_13_ub : cos (13/10) <= 27/100.
+Lemma cos_134_ub : cos (134/100) <= 24/100.
 Proof.
-  pose proof (cos_2a_sin (13/20)) as H. replace (2 * (13/20)) with (13/10) in H by lra. rewrite H.
-  pose proof (sin_lower_cubic (13/20) ltac:(lra) ltac:(lra)) as Hsc.
-  assert (sin (13/20) >= 13/20 - (13/20) * (13/20) * (13/20) / 6) by lra.
-  assert (sin (13/20) >= 0) by (apply Rle_ge, sin_ge_0; [lra | pose proof one_lt_PI; lra]).
+  pose proof (cos_2a_sin (67/100)) as H. replace (2 * (67/100)) with (134/100) in H by lra. rewrite H.
+  pose proof (sin_lower_cubic (67/100) ltac:(lra) ltac:(lra)) as Hsc.
+  assert (sin (67/100) >= 67/100 - (67/100) * (67/100) * (67/100) / 6) by lra.
+  assert (sin (67/100) >= 0) by (apply Rle_ge, sin_ge_0; [lra | pose proof one_lt_PI; lra]).
   nra.
 Qed.
 
-Lemma cos_46_ub : cos (46/100) <= 90/100.
+Lemma cos_56_ub : cos (56/100) <= 85/100.
 Proof.
-  pose proof (cos_2a_sin (23/100)) as H. replace (2 * (23/100)) with (46/100) in H by lra. rewrite H.
-  pose proof (sin_lower_cubic (23/100) ltac:(lra) ltac:(lra)) as Hsc.
-  assert (sin (23/100) >= 23/100 - (23/100) * (23/100) * (23/100) / 6) by lra.
-  assert (sin (23/100) >= 0) by (apply Rle_ge, sin_ge_0; [lra | pose proof one_lt_PI; lra]).
+  pose proof (cos_2a_sin (28/100)) as H. replace (2 * (28/100)) with (56/100) in H by lra. rewrite H.
+  pose proof (sin_lower_cubic (28/100) ltac:(lra) ltac:(lra)) as Hsc.
+  assert (sin (28/100) >= 28/100 - (28/100) * (28/100) * (28/100) / 6) by lra.
+  assert (sin (28/100) >= 0) by (apply Rle_ge, sin_ge_0; [lra | pose proof one_lt_PI; lra]).
   nra.
+Qed.
+
+Lemma cos_105_ub : cos (105/100) <= 50/100.
+Proof.
+  pose proof (cos_2a_sin (525/1000)) as H. replace (2 * (525/1000)) with (105/100) in H by lra. rewrite H.
+  pose proof (sin_lower_cubic (525/1000) ltac:(lra) ltac:(lra)) as Hsc.
+  assert (sin (525/1000) >= 525/1000 - (525/1000) * (525/1000) * (525/1000) / 6) by lra.
+  assert (sin (525/1000) >= 0) by (apply Rle_ge, sin_ge_0; [lra | pose proof one_lt_PI; lra]).
+  nra.
+Qed.
+
+(* sin of a haversine central angle is nonnegative (the angle lies in [0,pi]). *)
+
+Lemma sin_central_nonneg : forall d a,
+  0 <= a -> a <= 1 -> d = 2 * R_earth * asin (sqrt a) ->
+  0 <= sin (distance_to_central_angle d).
+Proof.
+  intros d a Ha0 Ha1 Hd.
+  unfold distance_to_central_angle. subst d.
+  assert (HR : R_earth > 0) by exact R_earth_pos.
+  assert (Hdiv : 2 * R_earth * asin (sqrt a) / R_earth = 2 * asin (sqrt a)) by (field; lra).
+  rewrite Hdiv. apply sin_ge_0.
+  - assert (0 <= asin (sqrt a))
+      by (apply asin_nonneg_on_0_1; split; [apply sqrt_pos | rewrite <- sqrt_1; apply sqrt_le_1_alt; lra]).
+    lra.
+  - pose proof (asin_bound (sqrt a)) as [_ Hub]. lra.
+Qed.
+
+Lemma a_v1_v2_ub : a_v1_v2 <= 1/4.
+Proof.
+  rewrite a_v1_v2_eq. unfold hav, Rsqr.
+  assert (sin 1 < 1) by (apply sin_lt_x; lra).
+  pose proof one_lt_PI.
+  assert (0 <= sin (1/2)) by (apply sin_ge_0; [lra | lra]).
+  assert (sin (1/2) < 1/2) by (apply sin_lt_x; lra).
+  nra.
+Qed.
+
+(* Sine of 1 radian, via the double-angle identity sin 1 = 2 sin(1/2) cos(1/2). *)
+
+Lemma sin_1_lb : sin 1 >= 161/192.
+Proof.
+  pose proof (sin_2a (1/2)) as H. replace (2 * (1/2)) with 1 in H by lra. rewrite H.
+  pose proof (sin_lower_cubic (1/2) ltac:(lra) ltac:(lra)) as Hs.
+  assert (sin (1/2) >= 23/48) by lra. pose proof cos_half_lb.
+  assert (sin (1/2) >= 0) by lra. assert (cos (1/2) >= 0) by lra. nra.
+Qed.
+
+Lemma sin_1_ub : sin 1 <= 878/1000.
+Proof.
+  pose proof (sin_2a (1/2)) as H. replace (2 * (1/2)) with 1 in H by lra. rewrite H.
+  assert (sin (1/2) < 1/2) by (apply sin_lt_x; lra).
+  assert (sin (1/2) >= 0) by (apply Rle_ge, sin_ge_0; [lra | pose proof one_lt_PI; lra]).
+  pose proof cos_half_ub. pose proof cos_half_lb. nra.
+Qed.
+
+Lemma hav_2_lb : hav 2 >= (161/192) * (161/192).
+Proof.
+  unfold hav. replace (2/2) with 1 by lra. unfold Rsqr.
+  pose proof sin_1_lb. assert (sin 1 >= 0) by (pose proof sin_1_lb; lra). nra.
+Qed.
+
+Lemma hav_2_ub : hav 2 <= (878/1000) * (878/1000).
+Proof.
+  unfold hav. replace (2/2) with 1 by lra. unfold Rsqr.
+  pose proof sin_1_ub. assert (sin 1 >= 0) by (pose proof sin_1_lb; lra). nra.
+Qed.
+
+(* Upper bounds on a_v2_v3 and a_v3_v1 (needed for the two negative-cosine
+   edges from the exterior point). *)
+
+Lemma a_v2_v3_ub : a_v2_v3 <= 184/1000.
+Proof.
+  rewrite a_v2_v3_eq.
+  assert (Hh : hav (1/2) <= 1/16).
+  { unfold hav. replace (1/2 / 2) with (1/4) by lra. unfold Rsqr.
+    assert (sin (1/4) < 1/4) by (apply sin_lt_x; lra).
+    assert (0 <= sin (1/4)) by (apply sin_ge_0; [lra | pose proof one_lt_PI; lra]). nra. }
+  assert (Hh1 : hav 1 <= 1/4).
+  { unfold hav. unfold Rsqr.
+    assert (sin (1/2) < 1/2) by (apply sin_lt_x; lra).
+    assert (0 <= sin (1/2)) by (apply sin_ge_0; [lra | pose proof one_lt_PI; lra]). nra. }
+  assert (0 <= hav 1) by apply hav_nonneg.
+  pose proof cos_1_ub. pose proof cos_one_lb. pose proof cos_half_ub. pose proof cos_half_lb.
+  assert (cos 1 * cos (1/2) <= (55/100) * (878/1000)) by nra.
+  assert (cos 1 * cos (1/2) >= 0) by nra.
+  assert (cos 1 * cos (1/2) * hav 1 <= (55/100) * (878/1000) * (1/4)) by nra.
+  lra.
+Qed.
+
+Lemma a_v3_v1_ub : a_v3_v1 <= 282/1000.
+Proof.
+  rewrite a_v3_v1_eq.
+  assert (Hh : hav (1/2) <= 1/16).
+  { unfold hav. replace (1/2 / 2) with (1/4) by lra. unfold Rsqr.
+    assert (sin (1/4) < 1/4) by (apply sin_lt_x; lra).
+    assert (0 <= sin (1/4)) by (apply sin_ge_0; [lra | pose proof one_lt_PI; lra]). nra. }
+  assert (Hh1 : hav 1 <= 1/4).
+  { unfold hav. unfold Rsqr.
+    assert (sin (1/2) < 1/2) by (apply sin_lt_x; lra).
+    assert (0 <= sin (1/2)) by (apply sin_ge_0; [lra | pose proof one_lt_PI; lra]). nra. }
+  assert (0 <= hav 1) by apply hav_nonneg.
+  pose proof cos_half_ub. pose proof cos_half_lb.
+  assert (cos (1/2) * hav 1 <= (878/1000) * (1/4)) by nra.
+  lra.
+Qed.
+
+(* Haversine arguments for the three exterior distances e-v1, e-v2, e-v3. *)
+
+Definition a_e_v1 : R :=
+  let dphi := 0 - (1/2) in
+  let dlambda := 0 - (-1) in
+  hav dphi + cos (1/2) * cos 0 * hav dlambda.
+
+Definition a_e_v2 : R :=
+  let dphi := 1 - (1/2) in
+  let dlambda := 0 - (-1) in
+  hav dphi + cos (1/2) * cos 1 * hav dlambda.
+
+Definition a_e_v3 : R :=
+  let dphi := 1/2 - (1/2) in
+  let dlambda := 1 - (-1) in
+  hav dphi + cos (1/2) * cos (1/2) * hav dlambda.
+
+Lemma distance_e_v1_eq :
+  distance test_exterior test_triangle_v1 = 2 * R_earth * asin (sqrt a_e_v1).
+Proof.
+  unfold distance, test_exterior, test_triangle_v1, a_e_v1. simpl phi. simpl lambda. reflexivity.
+Qed.
+
+Lemma distance_e_v2_eq :
+  distance test_exterior test_triangle_v2 = 2 * R_earth * asin (sqrt a_e_v2).
+Proof.
+  unfold distance, test_exterior, test_triangle_v2, a_e_v2. simpl phi. simpl lambda. reflexivity.
+Qed.
+
+Lemma distance_e_v3_eq :
+  distance test_exterior test_triangle_v3 = 2 * R_earth * asin (sqrt a_e_v3).
+Proof.
+  unfold distance, test_exterior, test_triangle_v3, a_e_v3. simpl phi. simpl lambda. reflexivity.
+Qed.
+
+Lemma a_e_v1_eq : a_e_v1 = hav (1/2) + cos (1/2) * hav 1.
+Proof.
+  unfold a_e_v1. replace (0 - (1/2)) with (-(1/2)) by lra. rewrite hav_neg.
+  replace (0 - (-1)) with 1 by lra. rewrite cos_0. ring.
+Qed.
+
+Lemma a_e_v2_eq : a_e_v2 = hav (1/2) + cos 1 * cos (1/2) * hav 1.
+Proof.
+  unfold a_e_v2. replace (1 - (1/2)) with (1/2) by lra.
+  replace (0 - (-1)) with 1 by lra. ring.
+Qed.
+
+Lemma a_e_v3_eq : a_e_v3 = cos (1/2) * cos (1/2) * hav 2.
+Proof.
+  unfold a_e_v3. replace (1/2 - (1/2)) with 0 by lra. rewrite hav_0.
+  replace (1 - (-1)) with 2 by lra. ring.
+Qed.
+
+Lemma a_e_v1_nonneg : 0 <= a_e_v1.
+Proof.
+  rewrite a_e_v1_eq. pose proof (hav_nonneg (1/2)). pose proof cos_half_lb. pose proof (hav_nonneg 1).
+  assert (0 <= cos (1/2) * hav 1) by (apply Rmult_le_pos; lra). lra.
+Qed.
+
+Lemma a_e_v1_hi : a_e_v1 <= 282/1000.
+Proof.
+  rewrite a_e_v1_eq.
+  assert (Hh : hav (1/2) <= 1/16).
+  { unfold hav. replace (1/2 / 2) with (1/4) by lra. unfold Rsqr.
+    assert (sin (1/4) < 1/4) by (apply sin_lt_x; lra).
+    assert (0 <= sin (1/4)) by (apply sin_ge_0; [lra | pose proof one_lt_PI; lra]). nra. }
+  assert (Hh1 : hav 1 <= 1/4).
+  { unfold hav. unfold Rsqr.
+    assert (sin (1/2) < 1/2) by (apply sin_lt_x; lra).
+    assert (0 <= sin (1/2)) by (apply sin_ge_0; [lra | pose proof one_lt_PI; lra]). nra. }
+  assert (0 <= hav 1) by apply hav_nonneg.
+  pose proof cos_half_ub. pose proof cos_half_lb.
+  assert (cos (1/2) * hav 1 <= (878/1000) * (1/4)) by nra. lra.
+Qed.
+
+Lemma a_e_v1_le1 : a_e_v1 <= 1.
+Proof. pose proof a_e_v1_hi. lra. Qed.
+
+Lemma a_e_v1_lo : a_e_v1 >= 261/1000.
+Proof.
+  rewrite a_e_v1_eq. pose proof hav_half_lb. pose proof cos_half_lb. pose proof hav_one_lb.
+  pose proof (hav_nonneg 1).
+  assert (cos (1/2) * hav 1 >= (7/8) * ((23/48) * (23/48))) by nra. lra.
+Qed.
+
+Lemma a_e_v2_nonneg : 0 <= a_e_v2.
+Proof.
+  rewrite a_e_v2_eq. pose proof (hav_nonneg (1/2)). pose proof cos_one_lb. pose proof cos_half_lb.
+  pose proof (hav_nonneg 1).
+  assert (0 <= cos 1 * cos (1/2) * hav 1) by (apply Rmult_le_pos; [apply Rmult_le_pos|]; lra). lra.
+Qed.
+
+Lemma a_e_v2_hi : a_e_v2 <= 184/1000.
+Proof.
+  rewrite a_e_v2_eq.
+  assert (Hh : hav (1/2) <= 1/16).
+  { unfold hav. replace (1/2 / 2) with (1/4) by lra. unfold Rsqr.
+    assert (sin (1/4) < 1/4) by (apply sin_lt_x; lra).
+    assert (0 <= sin (1/4)) by (apply sin_ge_0; [lra | pose proof one_lt_PI; lra]). nra. }
+  assert (Hh1 : hav 1 <= 1/4).
+  { unfold hav. unfold Rsqr.
+    assert (sin (1/2) < 1/2) by (apply sin_lt_x; lra).
+    assert (0 <= sin (1/2)) by (apply sin_ge_0; [lra | pose proof one_lt_PI; lra]). nra. }
+  assert (0 <= hav 1) by apply hav_nonneg.
+  pose proof cos_1_ub. pose proof cos_one_lb. pose proof cos_half_ub. pose proof cos_half_lb.
+  assert (cos 1 * cos (1/2) <= (55/100) * (878/1000)) by nra.
+  assert (cos 1 * cos (1/2) >= 0) by nra.
+  assert (cos 1 * cos (1/2) * hav 1 <= (55/100) * (878/1000) * (1/4)) by nra. lra.
+Qed.
+
+Lemma a_e_v2_le1 : a_e_v2 <= 1.
+Proof. pose proof a_e_v2_hi. lra. Qed.
+
+Lemma a_e_v2_lo : a_e_v2 >= 161/1000.
+Proof.
+  rewrite a_e_v2_eq. pose proof hav_half_lb. pose proof cos_one_lb. pose proof cos_half_lb.
+  pose proof hav_one_lb. pose proof (hav_nonneg 1).
+  assert (Hp1 : cos 1 * cos (1/2) >= (1/2) * (7/8)) by nra.
+  assert (Hp2 : cos 1 * cos (1/2) * hav 1 >= ((1/2) * (7/8)) * ((23/48) * (23/48))) by nra. lra.
+Qed.
+
+Lemma a_e_v3_nonneg : 0 <= a_e_v3.
+Proof.
+  rewrite a_e_v3_eq. pose proof cos_half_lb. pose proof (hav_nonneg 2).
+  assert (0 <= cos (1/2) * cos (1/2)) by nra. nra.
+Qed.
+
+Lemma a_e_v3_hi : a_e_v3 <= 595/1000.
+Proof.
+  rewrite a_e_v3_eq.
+  pose proof cos_half_lb. pose proof cos_half_ub. pose proof hav_2_ub. pose proof (hav_nonneg 2).
+  assert (cos (1/2) * cos (1/2) <= (878/1000) * (878/1000)) by nra.
+  assert (0 <= cos (1/2) * cos (1/2)) by nra. nra.
+Qed.
+
+Lemma a_e_v3_le1 : a_e_v3 <= 1.
+Proof. pose proof a_e_v3_hi. lra. Qed.
+
+Lemma a_e_v3_lo : a_e_v3 >= 538/1000.
+Proof.
+  rewrite a_e_v3_eq.
+  pose proof cos_half_lb. pose proof hav_2_lb.
+  assert (cos (1/2) * cos (1/2) >= (7/8) * (7/8)) by nra. nra.
+Qed.
+
+(* Sine bounds for the exterior central angles, from sin^2 = 4a(1-a). *)
+
+Lemma sin_e_v1_lb :
+  sin (distance_to_central_angle (distance test_exterior test_triangle_v1)) >= 1/2.
+Proof.
+  pose proof (sin_central_sq _ _ a_e_v1_nonneg a_e_v1_le1 distance_e_v1_eq) as Hsq.
+  pose proof (sin_central_nonneg _ _ a_e_v1_nonneg a_e_v1_le1 distance_e_v1_eq) as Hnn.
+  pose proof a_e_v1_lo. pose proof a_e_v1_hi.
+  apply Rle_ge. apply ge_of_sqr_ge; [exact Hnn | lra |].
+  rewrite Hsq. unfold Rsqr. nra.
+Qed.
+
+Lemma sin_e_v1_ub :
+  sin (distance_to_central_angle (distance test_exterior test_triangle_v1)) <= 91/100.
+Proof.
+  pose proof (sin_central_sq _ _ a_e_v1_nonneg a_e_v1_le1 distance_e_v1_eq) as Hsq.
+  pose proof (sin_central_nonneg _ _ a_e_v1_nonneg a_e_v1_le1 distance_e_v1_eq) as Hnn.
+  pose proof a_e_v1_lo. pose proof a_e_v1_hi.
+  apply ge_of_sqr_ge; [lra | exact Hnn |].
+  rewrite Hsq. unfold Rsqr. nra.
+Qed.
+
+Lemma sin_e_v2_lb :
+  sin (distance_to_central_angle (distance test_exterior test_triangle_v2)) >= 1/2.
+Proof.
+  pose proof (sin_central_sq _ _ a_e_v2_nonneg a_e_v2_le1 distance_e_v2_eq) as Hsq.
+  pose proof (sin_central_nonneg _ _ a_e_v2_nonneg a_e_v2_le1 distance_e_v2_eq) as Hnn.
+  pose proof a_e_v2_lo. pose proof a_e_v2_hi.
+  apply Rle_ge. apply ge_of_sqr_ge; [exact Hnn | lra |].
+  rewrite Hsq. unfold Rsqr. nra.
+Qed.
+
+Lemma sin_e_v2_ub :
+  sin (distance_to_central_angle (distance test_exterior test_triangle_v2)) <= 78/100.
+Proof.
+  pose proof (sin_central_sq _ _ a_e_v2_nonneg a_e_v2_le1 distance_e_v2_eq) as Hsq.
+  pose proof (sin_central_nonneg _ _ a_e_v2_nonneg a_e_v2_le1 distance_e_v2_eq) as Hnn.
+  pose proof a_e_v2_lo. pose proof a_e_v2_hi.
+  apply ge_of_sqr_ge; [lra | exact Hnn |].
+  rewrite Hsq. unfold Rsqr. nra.
+Qed.
+
+Lemma sin_e_v3_lb :
+  sin (distance_to_central_angle (distance test_exterior test_triangle_v3)) >= 1/2.
+Proof.
+  pose proof (sin_central_sq _ _ a_e_v3_nonneg a_e_v3_le1 distance_e_v3_eq) as Hsq.
+  pose proof (sin_central_nonneg _ _ a_e_v3_nonneg a_e_v3_le1 distance_e_v3_eq) as Hnn.
+  pose proof a_e_v3_lo. pose proof a_e_v3_hi.
+  apply Rle_ge. apply ge_of_sqr_ge; [exact Hnn | lra |].
+  rewrite Hsq. unfold Rsqr. nra.
 Qed.
 
 (* Geometric axioms for the test exterior point. Each edge, viewed from the
@@ -9805,8 +10107,109 @@ Qed.
    - Edge v3-v1: d(e,v3)² + d(e,v1)² ≈ 4 + 1.25 = 5.25 > 1.25 = d(v3,v1)²
    Each angle is acute (< π/2), so sum < 3π/2. We need the tighter bound < π. *)
 
-Axiom exterior_winding_sum_bound :
+(* Each edge subtends an angle bounded above by a rational cap, obtained by
+   lower-bounding the law-of-cosines argument (square form, so the sine
+   denominators stay rational) and lifting through acos. *)
+
+Lemma seg_e_v1v2_le :
+  segment_angle test_exterior test_triangle_v1 test_triangle_v2 <= 134/100.
+Proof.
+  unfold segment_angle.
+  pose proof (law_of_cosines_arg_bounds (distance test_exterior test_triangle_v1)
+                (distance test_exterior test_triangle_v2)
+                (distance test_triangle_v1 test_triangle_v2)) as Hb.
+  assert (Harg : law_of_cosines_arg (distance test_exterior test_triangle_v1)
+                   (distance test_exterior test_triangle_v2)
+                   (distance test_triangle_v1 test_triangle_v2) >= 24/100).
+  { apply law_of_cosines_arg_ge.
+    - lra.
+    - pose proof sin_e_v1_lb. pose proof sin_e_v2_lb. nra.
+    - pose proof (cos_dist_over_R _ _ a_e_v1_nonneg a_e_v1_le1 distance_e_v1_eq) as Cev1.
+      pose proof (cos_dist_over_R _ _ a_e_v2_nonneg a_e_v2_le1 distance_e_v2_eq) as Cev2.
+      pose proof (cos_dist_over_R _ _ a_v1_v2_nonneg a_v1_v2_le1 distance_v1_v2_eq) as Cv12.
+      rewrite Cev1, Cev2, Cv12.
+      pose proof sin_e_v1_lb. pose proof sin_e_v1_ub. pose proof sin_e_v2_lb. pose proof sin_e_v2_ub.
+      pose proof a_v1_v2_ub. pose proof a_v1_v2_nonneg.
+      pose proof a_e_v1_lo. pose proof a_e_v1_hi. pose proof a_e_v2_lo. pose proof a_e_v2_hi.
+      set (s1 := sin (distance_to_central_angle (distance test_exterior test_triangle_v1))) in *.
+      set (s2 := sin (distance_to_central_angle (distance test_exterior test_triangle_v2))) in *.
+      assert (Hss : s1 * s2 <= (91/100) * (78/100)) by nra.
+      assert (Hnum : 1 - 2 * a_v1_v2 - (1 - 2 * a_e_v1) * (1 - 2 * a_e_v2)
+                     >= (24/100) * ((91/100) * (78/100))) by nra.
+      nra. }
+  apply acos_upper; [exact Hb | pose proof PI_gt_3; lra | pose proof cos_134_ub; lra].
+Qed.
+
+Lemma seg_e_v2v3_le :
+  segment_angle test_exterior test_triangle_v2 test_triangle_v3 <= 56/100.
+Proof.
+  unfold segment_angle.
+  pose proof (law_of_cosines_arg_bounds (distance test_exterior test_triangle_v2)
+                (distance test_exterior test_triangle_v3)
+                (distance test_triangle_v2 test_triangle_v3)) as Hb.
+  assert (Harg : law_of_cosines_arg (distance test_exterior test_triangle_v2)
+                   (distance test_exterior test_triangle_v3)
+                   (distance test_triangle_v2 test_triangle_v3) >= 85/100).
+  { apply law_of_cosines_arg_ge.
+    - lra.
+    - pose proof sin_e_v2_lb. pose proof sin_e_v3_lb. nra.
+    - pose proof (cos_dist_over_R _ _ a_e_v2_nonneg a_e_v2_le1 distance_e_v2_eq) as Cev2.
+      pose proof (cos_dist_over_R _ _ a_e_v3_nonneg a_e_v3_le1 distance_e_v3_eq) as Cev3.
+      pose proof (cos_dist_over_R _ _ a_v2_v3_nonneg a_v2_v3_le1 distance_v2_v3_eq) as Cv23.
+      rewrite Cev2, Cev3, Cv23.
+      pose proof sin_e_v2_lb. pose proof sin_e_v2_ub. pose proof sin_e_v3_lb.
+      pose proof (SIN_bound (distance_to_central_angle (distance test_exterior test_triangle_v3))) as Hs3.
+      pose proof a_v2_v3_ub. pose proof a_v2_v3_nonneg.
+      pose proof a_e_v2_lo. pose proof a_e_v2_hi. pose proof a_e_v3_lo. pose proof a_e_v3_hi.
+      set (s2 := sin (distance_to_central_angle (distance test_exterior test_triangle_v2))) in *.
+      set (s3 := sin (distance_to_central_angle (distance test_exterior test_triangle_v3))) in *.
+      assert (Hss : s2 * s3 <= (78/100) * 1) by nra.
+      assert (Hnum : 1 - 2 * a_v2_v3 - (1 - 2 * a_e_v2) * (1 - 2 * a_e_v3)
+                     >= (85/100) * ((78/100) * 1)) by nra.
+      nra. }
+  apply acos_upper; [exact Hb | pose proof PI_gt_3; lra | pose proof cos_56_ub; lra].
+Qed.
+
+Lemma seg_e_v3v1_le :
+  segment_angle test_exterior test_triangle_v3 test_triangle_v1 <= 105/100.
+Proof.
+  unfold segment_angle.
+  pose proof (law_of_cosines_arg_bounds (distance test_exterior test_triangle_v3)
+                (distance test_exterior test_triangle_v1)
+                (distance test_triangle_v3 test_triangle_v1)) as Hb.
+  assert (Harg : law_of_cosines_arg (distance test_exterior test_triangle_v3)
+                   (distance test_exterior test_triangle_v1)
+                   (distance test_triangle_v3 test_triangle_v1) >= 50/100).
+  { apply law_of_cosines_arg_ge.
+    - lra.
+    - pose proof sin_e_v3_lb. pose proof sin_e_v1_lb. nra.
+    - pose proof (cos_dist_over_R _ _ a_e_v3_nonneg a_e_v3_le1 distance_e_v3_eq) as Cev3.
+      pose proof (cos_dist_over_R _ _ a_e_v1_nonneg a_e_v1_le1 distance_e_v1_eq) as Cev1.
+      pose proof (cos_dist_over_R _ _ a_v3_v1_nonneg a_v3_v1_le1 distance_v3_v1_eq) as Cv31.
+      rewrite Cev3, Cev1, Cv31.
+      pose proof sin_e_v3_lb. pose proof sin_e_v1_lb. pose proof sin_e_v1_ub.
+      pose proof (SIN_bound (distance_to_central_angle (distance test_exterior test_triangle_v3))) as Hs3.
+      pose proof a_v3_v1_ub. pose proof a_v3_v1_nonneg.
+      pose proof a_e_v3_lo. pose proof a_e_v3_hi. pose proof a_e_v1_lo. pose proof a_e_v1_hi.
+      set (s3 := sin (distance_to_central_angle (distance test_exterior test_triangle_v3))) in *.
+      set (s1 := sin (distance_to_central_angle (distance test_exterior test_triangle_v1))) in *.
+      assert (Hss : s3 * s1 <= 1 * (91/100)) by nra.
+      assert (Hnum : 1 - 2 * a_v3_v1 - (1 - 2 * a_e_v3) * (1 - 2 * a_e_v1)
+                     >= (50/100) * (1 * (91/100))) by nra.
+      nra. }
+  apply acos_upper; [exact Hb | pose proof PI_gt_3; lra | pose proof cos_105_ub; lra].
+Qed.
+
+(* The three exterior angle caps sum to 2.95 < pi, so the winding sum stays
+   below the inside/outside threshold. *)
+
+Lemma exterior_winding_sum_bound :
   winding_sum test_exterior test_triangle <= PI.
+Proof.
+  rewrite winding_sum_test_triangle_unfold.
+  pose proof seg_e_v1v2_le. pose proof seg_e_v2v3_le. pose proof seg_e_v3v1_le.
+  pose proof PI_gt_3. lra.
+Qed.
 
 (* Statement: The test exterior point has winding_sum ≤ π.                    *)
 
