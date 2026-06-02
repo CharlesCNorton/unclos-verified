@@ -5144,6 +5144,27 @@ Definition physically_habitable_dec (nc : NaturalConditions) : bool :=
   | right _ => false
   end.
 
+(* The decision procedure reflects the propositional habitability definition;
+   the boolean test and the legal predicate never diverge, so a claimant
+   cannot exploit a gap between the measurable test and the legal conclusion. *)
+
+Lemma physically_habitable_reflect : forall nc,
+  physically_habitable nc <-> physically_habitable_dec nc = true.
+Proof.
+  intros nc. unfold physically_habitable, physically_habitable_dec.
+  destruct (Rgt_dec (nc_potable_water_liters_per_day nc) 0) as [Hw | Hw].
+  - destruct (Rgt_dec (nc_arable_soil_hectares nc) 0) as [Hs | Hs].
+    + split.
+      * intros [_ [_ Hv]]. exact Hv.
+      * intros Hv. split; [exact Hw | split; [exact Hs | exact Hv]].
+    + split.
+      * intros [_ [Hs' _]]. exfalso. exact (Hs Hs').
+      * intros Hcontra. discriminate.
+  - split.
+    + intros [Hw' _]. exfalso. exact (Hw Hw').
+    + intros Hcontra. discriminate.
+Qed.
+
 (* Physical feature: location, natural conditions, and area. The legal
    status is derived, not asserted.                                          *)
 
@@ -7947,9 +7968,18 @@ Record HistoricClaim := mkHistoricClaim {
 
 Definition unclos_entry_into_force : R := date_unclos_entry_into_force.
 
-(* A state's ratification date determines when UNCLOS binds that state.      *)
+(* State identifier for China.                                               *)
 
-Definition state_ratification_date (s : StateId) : R := unclos_entry_into_force.
+Definition china : StateId := 1%nat.
+
+(* A state's ratification date determines when UNCLOS binds that state. The
+   Convention binds each State from its own date of consent to be bound,
+   which differs across States. China acceded on 7 June 1996 (JD 2450241);
+   States for which this development carries no specific datum default to the
+   Convention's entry into force.                                            *)
+
+Definition state_ratification_date (s : StateId) : R :=
+  if Nat.eqb s china then date_china_ratification else unclos_entry_into_force.
 
 (* A historic claim is incompatible with UNCLOS when it asserts rights
    beyond those permitted by the Convention (e.g., EEZ beyond 200nm,
@@ -7994,10 +8024,6 @@ Qed.
 (* Specific application: The "nine-dash line" historic claims are superseded
    by China's 1996 ratification of UNCLOS.                                   *)
 
-(* State identifier for China.                                               *)
-
-Definition china : StateId := 1%nat.
-
 (* The nine-dash line claim originates from the ROC's 1947 "Location Map of
    the South China Sea Islands" which depicted eleven dashes (reduced to nine
    by the PRC in 1953). The claim date is 1 December 1947.
@@ -8011,9 +8037,12 @@ Definition nine_dash_line_claim : HistoricClaim :=
 Theorem nine_dash_line_superseded :
   claim_extinguished nine_dash_line_claim china.
 Proof.
-  unfold claim_extinguished, nine_dash_line_claim, state_ratification_date.
-  unfold unclos_entry_into_force.
-  exact roc_map_before_unclos.
+  assert (Hrat : state_ratification_date china = date_china_ratification) by reflexivity.
+  unfold claim_extinguished. rewrite Hrat.
+  unfold nine_dash_line_claim. simpl hc_date_of_origin.
+  unfold date_roc_eleven_dash_map, date_china_ratification, jd_to_date,
+         jd_roc_eleven_dash_map, jd_china_ratification, jd_epoch_offset.
+  lra.
 Qed.
 
 Theorem nine_dash_line_not_operative :
@@ -8611,6 +8640,77 @@ Qed.
    point strictly inside a triangle, each edge subtends an angle > π/2.
    We verify this by showing the law_of_cosines_arg is negative for each edge. *)
 
+(* The clamped spherical-cosine argument is negative exactly when the raw
+   cosine numerator is, since the protected denominator is always positive. *)
+
+Lemma spherical_cosine_arg_neg : forall ca cb cab,
+  cos cab < cos ca * cos cb -> spherical_cosine_arg ca cb cab < 0.
+Proof.
+  intros ca cb cab Hcos.
+  unfold spherical_cosine_arg; cbv zeta.
+  set (dn := Rmax (Rabs (sin ca * sin cb)) 1e-10).
+  assert (Hdn : dn > 0) by (unfold dn; eapply Rlt_le_trans; [| apply Rmax_r]; lra).
+  assert (Hinv : / dn > 0) by (apply Rinv_0_lt_compat; exact Hdn).
+  assert (Hfrac : (cos cab - cos ca * cos cb) / dn < 0) by (unfold Rdiv; nra).
+  apply Rmax_lub_lt.
+  - lra.
+  - eapply Rle_lt_trans; [apply Rmin_r | exact Hfrac].
+Qed.
+
+(* Hence the law-of-cosines argument is negative when the spherical law of
+   cosines makes the subtended angle obtuse: cos(c) < cos(a) * cos(b). *)
+
+Lemma law_of_cosines_arg_neg_from_cos : forall da db dab,
+  cos (distance_to_central_angle dab)
+    < cos (distance_to_central_angle da) * cos (distance_to_central_angle db) ->
+  law_of_cosines_arg da db dab < 0.
+Proof.
+  intros da db dab Hcos.
+  unfold law_of_cosines_arg; cbv zeta.
+  apply spherical_cosine_arg_neg. exact Hcos.
+Qed.
+
+(* The cosine of a haversine central angle in closed form: for a great-circle
+   distance d = 2 R asin(sqrt a), cos(d / R) = 1 - 2a exactly.  This is the
+   key that turns the spherical obtuse test into an algebraic inequality on
+   the haversine arguments. *)
+
+Lemma cos_dist_over_R : forall d a,
+  0 <= a -> a <= 1 ->
+  d = 2 * R_earth * asin (sqrt a) ->
+  cos (distance_to_central_angle d) = 1 - 2 * a.
+Proof.
+  intros d a Ha0 Ha1 Hd.
+  unfold distance_to_central_angle. subst d.
+  assert (HR : R_earth > 0) by exact R_earth_pos.
+  assert (Hdiv : 2 * R_earth * asin (sqrt a) / R_earth = 2 * asin (sqrt a)) by (field; lra).
+  rewrite Hdiv.
+  assert (Hsb : -1 <= sqrt a <= 1).
+  { split; [pose proof (sqrt_pos a); lra | rewrite <- sqrt_1; apply sqrt_le_1_alt; lra]. }
+  assert (Hsin : sin (asin (sqrt a)) = sqrt a) by (apply sin_asin; exact Hsb).
+  assert (Hss : sqrt a * sqrt a = a) by (apply sqrt_sqrt; exact Ha0).
+  assert (Hcos2 : cos (2 * asin (sqrt a)) =
+                  1 - 2 * (sin (asin (sqrt a)) * sin (asin (sqrt a)))).
+  { pose proof (cos_2a_sin (asin (sqrt a))) as H. unfold Rsqr in H. lra. }
+  rewrite Hcos2, Hsin, Hss. ring.
+Qed.
+
+(* A segment subtends an obtuse angle at p when the cosine of the opposite
+   central angle is below the product of the two adjacent ones. *)
+
+Lemma segment_angle_obtuse_from_cos : forall p a b,
+  0 < distance p a -> 0 < distance p b ->
+  cos (distance_to_central_angle (distance a b))
+    < cos (distance_to_central_angle (distance p a))
+      * cos (distance_to_central_angle (distance p b)) ->
+  segment_angle p a b > PI / 2.
+Proof.
+  intros p a b Hpa Hpb Hcos.
+  unfold segment_angle.
+  apply law_of_cosines_arg_neg_implies_angle_gt_PI2; [exact Hpa | exact Hpb |].
+  apply law_of_cosines_arg_neg_from_cos. exact Hcos.
+Qed.
+
 (* Helper: if the point and vertices are distinct and the edge is longer than
    the sum of distances from p to the endpoints would allow for an acute
    angle, then the angle is obtuse (> π/2).
@@ -8620,83 +8720,10 @@ Qed.
    cos(cab) < cos(ca)*cos(cb) when cab > ca and cab > cb for small angles,
    making the spherical cosine argument negative.                             *)
 
-Lemma angle_obtuse_when_far_edge : forall da db dab,
-  0 < da -> 0 < db -> 0 < dab ->
-  dab < PI / 2 * R_earth ->
-  Rsqr da + Rsqr db < Rsqr dab ->
-  acos (law_of_cosines_arg da db dab) > PI / 2.
-Proof.
-  intros da db dab Hda Hdb Hdab Hdab_bound Hineq.
-  apply law_of_cosines_arg_neg_implies_angle_gt_PI2; [exact Hda | exact Hdb |].
-  unfold law_of_cosines_arg, spherical_cosine_arg, distance_to_central_angle.
-  set (ca := da / R_earth).
-  set (cb := db / R_earth).
-  set (cab := dab / R_earth).
-  assert (HR_pos : R_earth > 0).
-  { unfold R_earth, R_earth_default. lra. }
-  assert (Hca_pos : ca > 0).
-  { unfold ca. apply Rdiv_lt_0_compat; lra. }
-  assert (Hcb_pos : cb > 0).
-  { unfold cb. apply Rdiv_lt_0_compat; lra. }
-  assert (Hcab_pos : cab > 0).
-  { unfold cab. apply Rdiv_lt_0_compat; lra. }
-  assert (Hcab_lt_pi2 : cab < PI / 2).
-  { unfold cab.
-    unfold Rdiv.
-    assert (Hgoal : dab * / R_earth < PI / 2).
-    { apply Rmult_lt_reg_r with R_earth; [exact HR_pos |].
-      rewrite Rmult_assoc, Rinv_l, Rmult_1_r; [| lra].
-      assert (Hpi_comm : PI / 2 * R_earth = R_earth * (PI / 2)) by ring.
-      lra. }
-    exact Hgoal. }
-  assert (Hcab_lt_pi : cab < PI).
-  { pose proof PI_RGT_0. lra. }
-  assert (Hcab_gt : Rsqr ca + Rsqr cb < Rsqr cab).
-  { unfold ca, cb, cab, Rsqr.
-    unfold Rdiv.
-    assert (Hrinv_pos : / R_earth > 0) by (apply Rinv_0_lt_compat; exact HR_pos).
-    assert (Hrinv_sqr : / R_earth * / R_earth > 0) by (apply Rmult_gt_0_compat; exact Hrinv_pos).
-    assert (Hscale : forall x, (x * / R_earth) * (x * / R_earth) = x * x * (/ R_earth * / R_earth)).
-    { intro x. ring. }
-    rewrite !Hscale.
-    assert (Hdistrib : da * da * (/ R_earth * / R_earth) + db * db * (/ R_earth * / R_earth) =
-                       (da * da + db * db) * (/ R_earth * / R_earth)) by ring.
-    rewrite Hdistrib.
-    apply Rmult_lt_compat_r; [exact Hrinv_sqr |].
-    unfold Rsqr in Hineq. exact Hineq. }
-  assert (Hca_lt : ca < cab).
-  { unfold Rsqr in Hcab_gt. nra. }
-  assert (Hcb_lt : cb < cab).
-  { unfold Rsqr in Hcab_gt. nra. }
-  assert (Hca_lt_pi2 : ca < PI / 2) by lra.
-  assert (Hcb_lt_pi2 : cb < PI / 2) by lra.
-  assert (Hca_lt_pi : ca < PI).
-  { pose proof PI_RGT_0. lra. }
-  assert (Hcb_lt_pi : cb < PI).
-  { pose proof PI_RGT_0. lra. }
-  pose proof (spherical_cosine_arg_bounds ca cb cab) as [Hlo Hhi].
-  unfold spherical_cosine_arg.
-  set (num := cos cab - cos ca * cos cb).
-  set (denom := sin ca * sin cb).
-  assert (Hsin_ca_pos : sin ca > 0).
-  { apply sin_gt_0; [exact Hca_pos | lra]. }
-  assert (Hsin_cb_pos : sin cb > 0).
-  { apply sin_gt_0; [exact Hcb_pos | lra]. }
-  assert (Hdenom_pos : denom > 0).
-  { unfold denom. apply Rmult_gt_0_compat; assumption. }
-  assert (Habs_denom : Rabs denom = denom).
-  { apply Rabs_right. lra. }
-  assert (Hmax_denom : Rmax (Rabs denom) 1e-10 = Rabs denom \/ Rmax (Rabs denom) 1e-10 = 1e-10).
-  { unfold Rmax. destruct (Rle_dec (Rabs denom) 1e-10); [right | left]; reflexivity. }
-  assert (Hcos_ca_pos : cos ca > 0).
-  { apply cos_gt_0.
-    - pose proof PI_RGT_0. lra.
-    - exact Hca_lt_pi2. }
-  assert (Hcos_cb_pos : cos cb > 0).
-  { apply cos_gt_0.
-    - pose proof PI_RGT_0. lra.
-    - exact Hcb_lt_pi2. }
-Admitted.
+(* This obtuse test is now obtained directly from the spherical law of cosines
+   via segment_angle_obtuse_from_cos above, using the closed form
+   cos(d / R) = 1 - 2 * (haversine argument).  See the three centroid_angle_*
+   lemmas below: no squared-distance surrogate, and no axiom, is required. *)
 
 (* For positive x, acos(x) < π/2.                                            *)
 
@@ -9000,36 +9027,201 @@ Proof.
   rewrite distance_v1_v2_value. reflexivity.
 Qed.
 
-(* For small x > 0, asin(x) < x * (1 + x²/2). This follows from the Taylor
-   series of asin: asin(x) = x + x³/6 + 3x⁵/40 + ... < x + x³/6 + x³/6 + ...
-   = x / (1 - x²) for |x| < 1. For x < 1/2, this gives asin(x) < 4x/3.      *)
+(* Order-3 Taylor lower bound for sine on [0,1): sin u >= u - u^3/6.
+   Derived from the standard library SIN bracket (sin_lb u <= sin u) together
+   with positivity of the degree-5 minus degree-7 remainder.                 *)
+
+Lemma sin_lower_cubic : forall u, 0 <= u -> u < 1 -> sin u >= u - u * u * u / 6.
+Proof.
+  intros u Hge Hlt1.
+  destruct (Req_dec u 0) as [Hz | Hnz]; [subst u; rewrite sin_0; lra |].
+  assert (Hupos : 0 < u) by lra.
+  assert (HuPI : u <= PI) by (pose proof PI_gt_3; lra).
+  pose proof (proj1 (SIN u Hge HuPI)) as Hlb.
+  assert (Hhi : u * u * u * u * u / 120 - u * u * u * u * u * u * u / 5040 > 0).
+  { assert (Ha2 : u * u < 1) by nra.
+    set (a5 := u * u * u * u * u).
+    set (a7 := u * u * u * u * u * u * u).
+    assert (Ha5_pos : a5 > 0).
+    { unfold a5. apply Rmult_gt_0_compat.
+      - apply Rmult_gt_0_compat.
+        + apply Rmult_gt_0_compat.
+          * apply Rmult_gt_0_compat; lra.
+          * lra.
+        + lra.
+      - lra. }
+    assert (Ha7_eq : a7 = a5 * u * u) by (unfold a5, a7; ring).
+    assert (Ha7_lt : a7 < a5).
+    { rewrite Ha7_eq. nra. }
+    assert (Hscaled : a7 / 5040 < a5 / 120).
+    { unfold Rdiv.
+      assert (H120_5040 : / 120 > / 5040) by (apply Rinv_lt_contravar; lra).
+      assert (Ha5_div : a5 * / 120 > a5 * / 5040) by (apply Rmult_gt_compat_l; lra).
+      assert (Ha7_div : a7 * / 5040 < a5 * / 5040).
+      { apply Rmult_lt_compat_r; [apply Rinv_0_lt_compat; lra | exact Ha7_lt]. }
+      lra. }
+    lra. }
+  assert (Hsum : sin_lb u =
+    (u - u * u * u / 6) +
+    (u * u * u * u * u / 120 - u * u * u * u * u * u * u / 5040)).
+  { unfold sin_lb, sin_approx, sin_term. simpl. field. }
+  lra.
+Qed.
+
+(* For x in [0, 1/3], asin x <= x + x^3.  The cubic slack absorbs the entire
+   asin Taylor tail beyond the linear term on this interval: x <= sin u for
+   u = x + x^3 (via the cubic sine lower bound), then invert through asin.    *)
 
 Lemma asin_upper_bound_small : forall x, 0 <= x -> x <= 1/3 -> asin x <= x + x*x*x.
 Proof.
   intros x Hge0 Hle.
-  destruct (Req_dec x 0) as [Hz | Hnz].
-  - subst x. rewrite asin_0. lra.
-  - (* For x in (0, 1/3], asin(x) = x + x³/6 + 3x⁵/40 + ...
-       Since x <= 1/3, we have x³/6 + 3x⁵/40 + ... < x³ *)
-Admitted.
+  destruct (Req_dec x 0) as [Hz | Hnz]; [subst x; rewrite asin_0; lra |].
+  assert (Hxpos : 0 < x) by lra.
+  set (u := x + x * x * x).
+  assert (Hu_ge : 0 <= u) by (unfold u; nra).
+  assert (Hu_lt1 : u < 1) by (unfold u; nra).
+  assert (Hsin_lb : sin u >= u - u * u * u / 6) by (apply sin_lower_cubic; assumption).
+  assert (Hx2 : x * x <= 1/9) by nra.
+  assert (Hx4 : x * x * x * x <= 1/81) by nra.
+  assert (Hx6 : x * x * x * x * x * x <= 1/729) by nra.
+  assert (Hcube : (1 + x*x) * (1 + x*x) * (1 + x*x) <= 6) by nra.
+  assert (Hx3_nn : 0 <= x * x * x) by nra.
+  assert (Hprod_nn : 0 <= x * x * x * (6 - (1 + x*x) * (1 + x*x) * (1 + x*x))) by nra.
+  assert (Hcubic : u - u * u * u / 6 >= x).
+  { assert (Hid : u - u * u * u / 6 - x =
+                  x * x * x * (6 - (1 + x*x) * (1 + x*x) * (1 + x*x)) / 6)
+      by (unfold u; field).
+    lra. }
+  assert (Hx_le_sin : x <= sin u) by lra.
+  assert (Hsin_bnd : -1 <= sin u <= 1) by (pose proof (SIN_bound u); lra).
+  assert (Hx_bnd : -1 <= x <= 1) by lra.
+  assert (Hmono : asin x <= asin (sin u)).
+  { apply asin_increasing; [exact Hx_bnd | exact Hsin_bnd | exact Hx_le_sin]. }
+  assert (Hasin_sin : asin (sin u) = u).
+  { apply asin_sin. pose proof PI_gt_3. unfold u in *. split; nra. }
+  rewrite Hasin_sin in Hmono. unfold u in Hmono. exact Hmono.
+Qed.
 
-(* Squared asin is bounded by a factor times the argument for small values.  *)
+(* Squared asin is bounded by twice the argument for small values:
+   (asin (sqrt a))^2 <= 2a on [0, 1/9].                                       *)
 
 Lemma Rsqr_asin_sqrt_bound : forall a, 0 <= a -> a <= 1/9 ->
   Rsqr (asin (sqrt a)) <= a * 2.
 Proof.
-Admitted.
+  intros a Hge Hle.
+  destruct (Req_dec a 0) as [Hz | Hnz].
+  { subst a. rewrite sqrt_0, asin_0. unfold Rsqr. lra. }
+  assert (Hapos : 0 < a) by lra.
+  assert (Hs_nonneg : 0 <= sqrt a) by apply sqrt_pos.
+  assert (Hss : sqrt a * sqrt a = a) by (apply sqrt_sqrt; lra).
+  assert (Hs_le : sqrt a <= 1/3).
+  { assert (Hmono : sqrt a <= sqrt (1/9)) by (apply sqrt_le_1_alt; lra).
+    replace (1/9) with (Rsqr (1/3)) in Hmono by (unfold Rsqr; lra).
+    rewrite sqrt_Rsqr in Hmono by lra. exact Hmono. }
+  pose proof (asin_upper_bound_small (sqrt a) Hs_nonneg Hs_le) as Hasin_ub.
+  assert (Hasin_nonneg : 0 <= asin (sqrt a)).
+  { apply asin_nonneg_on_0_1. split; [exact Hs_nonneg | lra]. }
+  set (R := sqrt a + sqrt a * sqrt a * sqrt a) in *.
+  assert (HR_nonneg : 0 <= R) by (unfold R; nra).
+  assert (Hsq : Rsqr (asin (sqrt a)) <= Rsqr R).
+  { unfold Rsqr. nra. }
+  assert (HRsqr : Rsqr R <= a * 2).
+  { unfold Rsqr, R.
+    assert (HRR : (sqrt a + sqrt a * sqrt a * sqrt a) *
+                  (sqrt a + sqrt a * sqrt a * sqrt a)
+                  = a + 2 * (a * a) + a * a * a).
+    { assert (Hexp : (sqrt a + sqrt a * sqrt a * sqrt a) *
+                     (sqrt a + sqrt a * sqrt a * sqrt a)
+                   = sqrt a * sqrt a
+                     + 2 * (sqrt a * sqrt a * (sqrt a * sqrt a))
+                     + sqrt a * sqrt a * (sqrt a * sqrt a) * (sqrt a * sqrt a)) by ring.
+      rewrite Hexp, !Hss. ring. }
+    rewrite HRR. nra. }
+  lra.
+Qed.
 
-(* The centroid distances satisfy the obtuse angle condition.                *)
+(* Sharper form, needed for the centroid edge where the factor-2 bound is too
+   loose: (asin (sqrt a))^2 <= (100/81) a on [0, 1/9], via
+   asin (sqrt a) <= sqrt a (1 + a) <= (10/9) sqrt a.                          *)
+
+Lemma Rsqr_asin_sqrt_bound_tight :
+  forall a, 0 <= a -> a <= 1/9 -> Rsqr (asin (sqrt a)) <= a * (100/81).
+Proof.
+  intros a Hge Hle.
+  destruct (Req_dec a 0) as [Hz | Hnz].
+  { subst a. rewrite sqrt_0, asin_0. unfold Rsqr. lra. }
+  assert (Hapos : 0 < a) by lra.
+  assert (Hs_nonneg : 0 <= sqrt a) by apply sqrt_pos.
+  assert (Hss : sqrt a * sqrt a = a) by (apply sqrt_sqrt; lra).
+  assert (Hs_le : sqrt a <= 1/3).
+  { assert (Hmono : sqrt a <= sqrt (1/9)) by (apply sqrt_le_1_alt; lra).
+    replace (1/9) with (Rsqr (1/3)) in Hmono by (unfold Rsqr; lra).
+    rewrite sqrt_Rsqr in Hmono by lra. exact Hmono. }
+  pose proof (asin_upper_bound_small (sqrt a) Hs_nonneg Hs_le) as Hub.
+  assert (Hasin_nonneg : 0 <= asin (sqrt a)).
+  { apply asin_nonneg_on_0_1. split; [exact Hs_nonneg | lra]. }
+  assert (Hcube : sqrt a * sqrt a * sqrt a = a * sqrt a).
+  { rewrite Hss. reflexivity. }
+  assert (Hub_clean : asin (sqrt a) <= sqrt a * (1 + a)).
+  { rewrite Hcube in Hub. lra. }
+  assert (Hub_final : asin (sqrt a) <= sqrt a * (10/9)).
+  { assert (Hstep : sqrt a * (1 + a) <= sqrt a * (10/9)).
+    { apply Rmult_le_compat_l; lra. }
+    lra. }
+  assert (Hrhs_nonneg : 0 <= sqrt a * (10/9)) by nra.
+  assert (Hsq : Rsqr (asin (sqrt a)) <= Rsqr (sqrt a * (10/9))).
+  { apply Rsqr_incr_1; [exact Hub_final | exact Hasin_nonneg | exact Hrhs_nonneg]. }
+  assert (Hrsqr : Rsqr (sqrt a * (10/9)) = a * (100/81)).
+  { unfold Rsqr.
+    replace (sqrt a * (10/9) * (sqrt a * (10/9))) with (sqrt a * sqrt a * (100/81)) by field.
+    rewrite Hss. reflexivity. }
+  rewrite Hrsqr in Hsq. exact Hsq.
+Qed.
+
+(* The centroid distances satisfy the obtuse angle condition: the two squared
+   distances from the centroid to v1 and v2 sum to strictly less than the
+   squared v1-v2 edge length, which equals R_earth^2.                         *)
 
 Lemma centroid_distances_obtuse_condition :
   Rsqr (distance test_centroid test_triangle_v1) +
   Rsqr (distance test_centroid test_triangle_v2) <
   Rsqr (distance test_triangle_v1 test_triangle_v2).
 Proof.
-  rewrite distance_centroid_v1_eq, distance_centroid_v2_eq.
-  rewrite Rsqr_distance_v1_v2.
-Admitted.
+  rewrite distance_centroid_v1_eq, distance_centroid_v2_eq, Rsqr_distance_v1_v2.
+  assert (Ha1_lo : 0 <= a_centroid_v1).
+  { unfold a_centroid_v1. rewrite cos_0.
+    pose proof (hav_nonneg (0 - 1/2)) as Hh1.
+    pose proof (hav_nonneg (0 - 1/3)) as Hh2.
+    assert (Hc : 0 <= cos (1/2)) by (apply cos_ge_0; pose proof PI_gt_3; lra).
+    nra. }
+  assert (Ha2_lo : 0 <= a_centroid_v2).
+  { unfold a_centroid_v2.
+    pose proof (hav_nonneg (1 - 1/2)) as Hh1.
+    pose proof (hav_nonneg (0 - 1/3)) as Hh2.
+    assert (Hc1 : 0 <= cos (1/2)) by (apply cos_ge_0; pose proof PI_gt_3; lra).
+    assert (Hc2 : 0 <= cos 1) by (apply cos_ge_0; pose proof PI_gt_3; lra).
+    assert (Hterm : 0 <= cos (1/2) * cos 1 * hav (0 - 1/3)).
+    { apply Rmult_le_pos; [apply Rmult_le_pos; [exact Hc1 | exact Hc2] | exact Hh2]. }
+    lra. }
+  assert (Ha1_hi : a_centroid_v1 <= 1/9) by (pose proof a_centroid_v1_upper; lra).
+  assert (Ha2_hi : a_centroid_v2 <= 1/9) by (pose proof a_centroid_v2_upper; lra).
+  pose proof (Rsqr_asin_sqrt_bound_tight a_centroid_v1 Ha1_lo Ha1_hi) as Hb1.
+  pose proof (Rsqr_asin_sqrt_bound_tight a_centroid_v2 Ha2_lo Ha2_hi) as Hb2.
+  pose proof a_centroid_v1_upper as Hu1.
+  pose proof a_centroid_v2_upper as Hu2.
+  set (s1 := asin (sqrt a_centroid_v1)) in *.
+  set (s2 := asin (sqrt a_centroid_v2)) in *.
+  assert (Hr1 : Rsqr s1 < (13/144) * (100/81)) by lra.
+  assert (Hr2 : Rsqr s2 < (13/144) * (100/81)) by lra.
+  assert (Hkey : 4 * Rsqr s1 + 4 * Rsqr s2 < 1) by lra.
+  assert (Hfac : Rsqr (2 * R_earth * s1) + Rsqr (2 * R_earth * s2)
+                 = Rsqr R_earth * (4 * Rsqr s1 + 4 * Rsqr s2)) by (unfold Rsqr; ring).
+  rewrite Hfac.
+  assert (HRR : 0 < Rsqr R_earth) by (unfold Rsqr, R_earth, R_earth_default; lra).
+  assert (Hgoal : Rsqr R_earth * (4 * Rsqr s1 + 4 * Rsqr s2) < Rsqr R_earth * 1).
+  { apply Rmult_lt_compat_l; [exact HRR | exact Hkey]. }
+  lra.
+Qed.
 
 (* The distances are positive.                                               *)
 
@@ -9182,22 +9374,324 @@ Proof.
   nra.
 Qed.
 
+(* Helper bounds on the haversine arguments, shared across the three edges.
+   Each centroid-to-vertex argument is nonnegative and at most 1 (so the
+   closed-form cosine applies), and the edge arguments admit the lower bounds
+   that make the spherical law of cosines yield an obtuse angle. *)
+
+Lemma a_centroid_v1_nonneg : 0 <= a_centroid_v1.
+Proof.
+  unfold a_centroid_v1. rewrite cos_0.
+  pose proof (hav_nonneg (0 - 1/2)) as H1. pose proof (hav_nonneg (0 - 1/3)) as H2.
+  assert (Hc : 0 <= cos (1/2)) by (apply cos_ge_0; pose proof PI_gt_3; lra). nra.
+Qed.
+
+Lemma a_centroid_v2_nonneg : 0 <= a_centroid_v2.
+Proof.
+  unfold a_centroid_v2.
+  pose proof (hav_nonneg (1 - 1/2)) as H1. pose proof (hav_nonneg (0 - 1/3)) as H2.
+  assert (Hc1 : 0 <= cos (1/2)) by (apply cos_ge_0; pose proof PI_gt_3; lra).
+  assert (Hc2 : 0 <= cos 1) by (apply cos_ge_0; pose proof PI_gt_3; lra).
+  assert (Ht : 0 <= cos (1/2) * cos 1 * hav (0 - 1/3))
+    by (apply Rmult_le_pos; [apply Rmult_le_pos|]; lra). lra.
+Qed.
+
+Lemma a_centroid_v1_le1 : a_centroid_v1 <= 1.
+Proof. pose proof a_centroid_v1_upper. lra. Qed.
+
+Lemma a_centroid_v2_le1 : a_centroid_v2 <= 1.
+Proof. pose proof a_centroid_v2_upper. lra. Qed.
+
+Lemma a_v1_v2_nonneg : 0 <= a_v1_v2.
+Proof. rewrite a_v1_v2_eq. apply hav_nonneg. Qed.
+
+Lemma a_v1_v2_le1 : a_v1_v2 <= 1.
+Proof. rewrite a_v1_v2_eq. pose proof (hav_le_1 1). lra. Qed.
+
+(* a_v1_v2 = hav 1 = sin^2(1/2) >= (23/48)^2, from sin(1/2) >= 1/2 - (1/2)^3/6. *)
+Lemma a_v1_v2_lower : a_v1_v2 >= (23/48) * (23/48).
+Proof.
+  rewrite a_v1_v2_eq. unfold hav, Rsqr.
+  pose proof (sin_lower_cubic (1/2) ltac:(lra) ltac:(lra)) as Hsc.
+  assert (Hsin : sin (1/2) >= 23/48) by lra.
+  nra.
+Qed.
+
 Lemma centroid_angle_v1v2_obtuse :
   segment_angle test_centroid test_triangle_v1 test_triangle_v2 > PI / 2.
 Proof.
-  apply angle_obtuse_when_far_edge.
+  pose proof (cos_dist_over_R _ _ a_centroid_v1_nonneg a_centroid_v1_le1
+                distance_centroid_v1_eq) as Ecv1.
+  pose proof (cos_dist_over_R _ _ a_centroid_v2_nonneg a_centroid_v2_le1
+                distance_centroid_v2_eq) as Ecv2.
+  pose proof (cos_dist_over_R _ _ a_v1_v2_nonneg a_v1_v2_le1
+                distance_v1_v2_eq) as Ev12.
+  pose proof a_centroid_v1_upper as Hu1.
+  pose proof a_centroid_v2_upper as Hu2.
+  pose proof a_v1_v2_lower as Hlow.
+  apply segment_angle_obtuse_from_cos.
   - exact distance_centroid_v1_pos.
   - exact distance_centroid_v2_pos.
-  - exact distance_v1_v2_pos.
-  - exact distance_v1_v2_lt_pi2_R.
-  - exact centroid_distances_obtuse_condition.
+  - rewrite Ev12, Ecv1, Ecv2. nra.
 Qed.
 
-Axiom centroid_angle_v2v3_obtuse :
-  segment_angle test_centroid test_triangle_v2 test_triangle_v3 > PI / 2.
+(* Pointwise sine/cosine bounds at the test-triangle half-angles, all from the
+   cubic sine bracket sin x >= x - x^3/6, the bound sin x < x, and the
+   concavity bound cos x > 1 - x^2/2. *)
 
-Axiom centroid_angle_v3v1_obtuse :
+Lemma sin_quarter_lb : sin (1/4) >= 95/384.
+Proof. pose proof (sin_lower_cubic (1/4) ltac:(lra) ltac:(lra)) as H. lra. Qed.
+
+Lemma sin_quarter_pos : sin (1/4) > 0.
+Proof. pose proof sin_quarter_lb. lra. Qed.
+
+Lemma cos_half_lb : cos (1/2) >= 7/8.
+Proof.
+  pose proof (cos_lower_bound (1/2) ltac:(pose proof one_lt_PI; lra)) as H.
+  unfold Rsqr in H. lra.
+Qed.
+
+Lemma cos_half_ub : cos (1/2) <= 878/1000.
+Proof.
+  pose proof (cos_2a_sin (1/4)) as H.
+  replace (2 * (1/4)) with (1/2) in H by lra.
+  rewrite H.
+  pose proof sin_quarter_lb. pose proof sin_quarter_pos. nra.
+Qed.
+
+Lemma cos_one_lb : cos 1 >= 1/2.
+Proof.
+  pose proof (cos_lower_bound 1 ltac:(pose proof PI_gt_3; lra)) as H.
+  unfold Rsqr in H. lra.
+Qed.
+
+Lemma hav_23_ub : hav (2/3) <= 1/9.
+Proof.
+  unfold hav. replace (2/3 / 2) with (1/3) by lra. unfold Rsqr.
+  assert (Hs : sin (1/3) < 1/3) by (apply sin_lt_x; lra).
+  assert (Hp : 0 <= sin (1/3)) by (apply sin_ge_0; [lra | pose proof one_lt_PI; lra]).
+  nra.
+Qed.
+
+Lemma hav_half_lb : hav (1/2) >= (95/384) * (95/384).
+Proof.
+  unfold hav. replace (1/2 / 2) with (1/4) by lra. unfold Rsqr.
+  pose proof sin_quarter_lb. pose proof sin_quarter_pos. nra.
+Qed.
+
+Lemma hav_one_lb : hav 1 >= (23/48) * (23/48).
+Proof.
+  unfold hav, Rsqr.
+  pose proof (sin_lower_cubic (1/2) ltac:(lra) ltac:(lra)) as Hsc.
+  assert (Hsin : sin (1/2) >= 23/48) by lra. nra.
+Qed.
+
+(* Haversine arguments for the third vertex and the two remaining edges. *)
+
+Definition a_centroid_v3 : R :=
+  let dphi := 1/2 - (1/2) in
+  let dlambda := 1 - (1/3) in
+  hav dphi + cos (1/2) * cos (1/2) * hav dlambda.
+
+Definition a_v2_v3 : R :=
+  let dphi := 1/2 - 1 in
+  let dlambda := 1 - 0 in
+  hav dphi + cos 1 * cos (1/2) * hav dlambda.
+
+Definition a_v3_v1 : R :=
+  let dphi := 0 - (1/2) in
+  let dlambda := 0 - 1 in
+  hav dphi + cos (1/2) * cos 0 * hav dlambda.
+
+Lemma distance_centroid_v3_eq :
+  distance test_centroid test_triangle_v3 = 2 * R_earth * asin (sqrt a_centroid_v3).
+Proof.
+  unfold distance, test_centroid, test_triangle_v3, a_centroid_v3.
+  simpl phi. simpl lambda. reflexivity.
+Qed.
+
+Lemma distance_v2_v3_eq :
+  distance test_triangle_v2 test_triangle_v3 = 2 * R_earth * asin (sqrt a_v2_v3).
+Proof.
+  unfold distance, test_triangle_v2, test_triangle_v3, a_v2_v3.
+  simpl phi. simpl lambda. reflexivity.
+Qed.
+
+Lemma distance_v3_v1_eq :
+  distance test_triangle_v3 test_triangle_v1 = 2 * R_earth * asin (sqrt a_v3_v1).
+Proof.
+  unfold distance, test_triangle_v3, test_triangle_v1, a_v3_v1.
+  simpl phi. simpl lambda. reflexivity.
+Qed.
+
+Lemma a_centroid_v3_eq : a_centroid_v3 = cos (1/2) * cos (1/2) * hav (2/3).
+Proof.
+  unfold a_centroid_v3. replace (1/2 - 1/2) with 0 by lra. rewrite hav_0.
+  replace (1 - 1/3) with (2/3) by lra. ring.
+Qed.
+
+Lemma a_v2_v3_eq : a_v2_v3 = hav (1/2) + cos 1 * cos (1/2) * hav 1.
+Proof.
+  unfold a_v2_v3. replace (1/2 - 1) with (-(1/2)) by lra. rewrite hav_neg.
+  replace (1 - 0) with 1 by lra. ring.
+Qed.
+
+Lemma a_v3_v1_eq : a_v3_v1 = hav (1/2) + cos (1/2) * hav 1.
+Proof.
+  unfold a_v3_v1. replace (0 - 1/2) with (-(1/2)) by lra. rewrite hav_neg.
+  replace (0 - 1) with (-(1)) by lra. rewrite hav_neg. rewrite cos_0. ring.
+Qed.
+
+Lemma a_centroid_v3_nonneg : 0 <= a_centroid_v3.
+Proof.
+  rewrite a_centroid_v3_eq. pose proof cos_half_lb. pose proof (hav_nonneg (2/3)). nra.
+Qed.
+
+Lemma a_centroid_v3_ub : a_centroid_v3 <= 86/1000.
+Proof.
+  rewrite a_centroid_v3_eq.
+  pose proof cos_half_lb. pose proof cos_half_ub.
+  pose proof hav_23_ub. pose proof (hav_nonneg (2/3)).
+  assert (Hcc : cos (1/2) * cos (1/2) <= (878/1000) * (878/1000)) by nra.
+  assert (Hccn : 0 <= cos (1/2) * cos (1/2)) by nra.
+  nra.
+Qed.
+
+Lemma a_centroid_v3_le1 : a_centroid_v3 <= 1.
+Proof. pose proof a_centroid_v3_ub. lra. Qed.
+
+Lemma a_v2_v3_nonneg : 0 <= a_v2_v3.
+Proof.
+  rewrite a_v2_v3_eq. pose proof (hav_nonneg (1/2)). pose proof cos_one_lb.
+  pose proof cos_half_lb. pose proof (hav_nonneg 1).
+  assert (0 <= cos 1 * cos (1/2) * hav 1) by (apply Rmult_le_pos; [apply Rmult_le_pos|]; lra).
+  lra.
+Qed.
+
+Lemma a_v2_v3_le1 : a_v2_v3 <= 1.
+Proof.
+  rewrite a_v2_v3_eq.
+  pose proof hav_half_lt_quarter as Hq.
+  assert (Hav1 : hav 1 < 1/4).
+  { unfold hav, Rsqr. assert (sin (1/2) < 1/2) by (apply sin_lt_x; lra).
+    assert (0 <= sin (1/2)) by (apply sin_ge_0; [lra | pose proof one_lt_PI; lra]). nra. }
+  pose proof (COS_bound 1) as [_ Hc1]. pose proof (COS_bound (1/2)) as [_ Hc].
+  pose proof cos_one_lb. pose proof cos_half_lb. pose proof (hav_nonneg 1).
+  assert (Hcc : cos 1 * cos (1/2) <= 1) by nra.
+  assert (cos 1 * cos (1/2) * hav 1 <= hav 1) by nra.
+  lra.
+Qed.
+
+Lemma a_v2_v3_lb :
+  a_v2_v3 >= (95/384) * (95/384) + (1/2) * ((7/8) * ((23/48) * (23/48))).
+Proof.
+  rewrite a_v2_v3_eq.
+  pose proof hav_half_lb. pose proof cos_one_lb. pose proof cos_half_lb.
+  pose proof hav_one_lb. pose proof (hav_nonneg 1).
+  assert (Hp1 : cos 1 * cos (1/2) >= (1/2) * (7/8)) by nra.
+  assert (Hp2 : cos 1 * cos (1/2) * hav 1 >= ((1/2) * (7/8)) * ((23/48) * (23/48))) by nra.
+  lra.
+Qed.
+
+Lemma a_v3_v1_nonneg : 0 <= a_v3_v1.
+Proof.
+  rewrite a_v3_v1_eq. pose proof (hav_nonneg (1/2)). pose proof cos_half_lb.
+  pose proof (hav_nonneg 1).
+  assert (0 <= cos (1/2) * hav 1) by (apply Rmult_le_pos; lra). lra.
+Qed.
+
+Lemma a_v3_v1_le1 : a_v3_v1 <= 1.
+Proof.
+  rewrite a_v3_v1_eq.
+  pose proof hav_half_lt_quarter as Hq.
+  assert (Hav1 : hav 1 < 1/4).
+  { unfold hav, Rsqr. assert (sin (1/2) < 1/2) by (apply sin_lt_x; lra).
+    assert (0 <= sin (1/2)) by (apply sin_ge_0; [lra | pose proof one_lt_PI; lra]). nra. }
+  pose proof (COS_bound (1/2)) as [_ Hc]. pose proof cos_half_lb. pose proof (hav_nonneg 1).
+  assert (cos (1/2) * hav 1 <= hav 1) by nra.
+  lra.
+Qed.
+
+Lemma a_v3_v1_lb :
+  a_v3_v1 >= (95/384) * (95/384) + (7/8) * ((23/48) * (23/48)).
+Proof.
+  rewrite a_v3_v1_eq.
+  pose proof hav_half_lb. pose proof cos_half_lb. pose proof hav_one_lb.
+  pose proof (hav_nonneg 1).
+  assert (Hp : cos (1/2) * hav 1 >= (7/8) * ((23/48) * (23/48))) by nra.
+  lra.
+Qed.
+
+Lemma distance_centroid_v3_pos : distance test_centroid test_triangle_v3 > 0.
+Proof.
+  rewrite distance_centroid_v3_eq.
+  assert (HR : R_earth > 0) by exact R_earth_pos.
+  assert (Hpos : 0 < a_centroid_v3).
+  { rewrite a_centroid_v3_eq.
+    assert (Hc : cos (1/2) > 0) by (apply cos_gt_0; pose proof one_lt_PI; lra).
+    assert (Hh : hav (2/3) > 0) by (apply hav_pos; [lra | pose proof PI_gt_3; lra]).
+    assert (Hcc : 0 < cos (1/2) * cos (1/2)) by nra.
+    nra. }
+  assert (Hle1 : a_centroid_v3 <= 1) by apply a_centroid_v3_le1.
+  assert (Hsqp : 0 < sqrt a_centroid_v3) by (apply sqrt_lt_R0; exact Hpos).
+  assert (Hsq1 : sqrt a_centroid_v3 <= 1)
+    by (rewrite <- sqrt_1; apply sqrt_le_1_alt; exact Hle1).
+  assert (Hasin : 0 < asin (sqrt a_centroid_v3)).
+  { assert (Hnn : 0 <= asin (sqrt a_centroid_v3))
+      by (apply asin_nonneg_on_0_1; split; [apply sqrt_pos | exact Hsq1]).
+    assert (Hne : asin (sqrt a_centroid_v3) <> 0).
+    { intro Heq. apply asin_eq_0 in Heq;
+        [| split; [pose proof (sqrt_pos a_centroid_v3); lra | exact Hsq1]].
+      assert (a_centroid_v3 = 0) by (apply sqrt_eq_0; [lra | exact Heq]). lra. }
+    lra. }
+  nra.
+Qed.
+
+(* Edge v2-v3 viewed from the centroid: 1 - 2 a_v2v3 < (1-2 a_cv2)(1-2 a_cv3). *)
+Lemma centroid_angle_v2v3_obtuse :
+  segment_angle test_centroid test_triangle_v2 test_triangle_v3 > PI / 2.
+Proof.
+  pose proof (cos_dist_over_R _ _ a_centroid_v2_nonneg a_centroid_v2_le1
+                distance_centroid_v2_eq) as Ecv2.
+  pose proof (cos_dist_over_R _ _ a_centroid_v3_nonneg a_centroid_v3_le1
+                distance_centroid_v3_eq) as Ecv3.
+  pose proof (cos_dist_over_R _ _ a_v2_v3_nonneg a_v2_v3_le1
+                distance_v2_v3_eq) as Ev23.
+  pose proof a_centroid_v2_upper as Hu2.
+  pose proof a_centroid_v3_ub as Hu3.
+  pose proof a_v2_v3_lb as Hlb.
+  pose proof a_centroid_v2_nonneg. pose proof a_centroid_v3_nonneg.
+  apply segment_angle_obtuse_from_cos.
+  - exact distance_centroid_v2_pos.
+  - exact distance_centroid_v3_pos.
+  - rewrite Ev23, Ecv2, Ecv3.
+    assert (Hprod : (1 - 2 * a_centroid_v2) * (1 - 2 * a_centroid_v3)
+                    >= (118/144) * (828/1000)) by nra.
+    lra.
+Qed.
+
+(* Edge v3-v1 viewed from the centroid: 1 - 2 a_v3v1 < (1-2 a_cv3)(1-2 a_cv1). *)
+Lemma centroid_angle_v3v1_obtuse :
   segment_angle test_centroid test_triangle_v3 test_triangle_v1 > PI / 2.
+Proof.
+  pose proof (cos_dist_over_R _ _ a_centroid_v3_nonneg a_centroid_v3_le1
+                distance_centroid_v3_eq) as Ecv3.
+  pose proof (cos_dist_over_R _ _ a_centroid_v1_nonneg a_centroid_v1_le1
+                distance_centroid_v1_eq) as Ecv1.
+  pose proof (cos_dist_over_R _ _ a_v3_v1_nonneg a_v3_v1_le1
+                distance_v3_v1_eq) as Ev31.
+  pose proof a_centroid_v3_ub as Hu3.
+  pose proof a_centroid_v1_upper as Hu1.
+  pose proof a_v3_v1_lb as Hlb.
+  pose proof a_centroid_v3_nonneg. pose proof a_centroid_v1_nonneg.
+  apply segment_angle_obtuse_from_cos.
+  - exact distance_centroid_v3_pos.
+  - exact distance_centroid_v1_pos.
+  - rewrite Ev31, Ecv3, Ecv1.
+    assert (Hprod : (1 - 2 * a_centroid_v3) * (1 - 2 * a_centroid_v1)
+                    >= (828/1000) * (118/144)) by nra.
+    lra.
+Qed.
 
 (* Statement: The test centroid has winding_sum > π in the test triangle.     *)
 
@@ -9211,6 +9705,96 @@ Proof.
   pose proof centroid_angle_v3v1_obtuse as H3.
   pose proof PI_RGT_0 as Hpi.
   lra.
+Qed.
+
+(* Infrastructure for the exterior bound: an acos upper bound, the closed form
+   sin^2(d/R) = 4a(1-a), a nonneg-square comparison, and a clamp-aware lower
+   bound for the law-of-cosines argument. *)
+
+Lemma acos_upper : forall arg theta,
+  -1 <= arg <= 1 -> 0 <= theta <= PI -> cos theta <= arg -> acos arg <= theta.
+Proof.
+  intros arg theta Harg Hth Hle.
+  pose proof (COS_bound theta) as Hcb.
+  assert (Hmono : acos arg <= acos (cos theta)).
+  { apply acos_decreasing; [lra | lra | exact Hle]. }
+  rewrite acos_cos in Hmono by lra. exact Hmono.
+Qed.
+
+Lemma sin_central_sq : forall d a,
+  0 <= a -> a <= 1 -> d = 2 * R_earth * asin (sqrt a) ->
+  Rsqr (sin (distance_to_central_angle d)) = 4 * a * (1 - a).
+Proof.
+  intros d a Ha0 Ha1 Hd.
+  pose proof (cos_dist_over_R d a Ha0 Ha1 Hd) as Hcos.
+  pose proof (sin2_cos2 (distance_to_central_angle d)) as Hpyth.
+  unfold Rsqr in *. rewrite Hcos in Hpyth. nra.
+Qed.
+
+Lemma ge_of_sqr_ge : forall x y, 0 <= x -> 0 <= y -> Rsqr y <= Rsqr x -> y <= x.
+Proof.
+  intros x y Hx Hy H. unfold Rsqr in H.
+  destruct (Rle_or_lt y x) as [Hok | Hbad]; [exact Hok |].
+  assert (Rsqr y > Rsqr x) by (unfold Rsqr; nra). unfold Rsqr in *. lra.
+Qed.
+
+Lemma law_of_cosines_arg_ge : forall da db dab L,
+  -1 <= L <= 1 ->
+  sin (distance_to_central_angle da) * sin (distance_to_central_angle db) >= 1e-10 ->
+  cos (distance_to_central_angle dab)
+    - cos (distance_to_central_angle da) * cos (distance_to_central_angle db)
+    >= L * (sin (distance_to_central_angle da) * sin (distance_to_central_angle db)) ->
+  law_of_cosines_arg da db dab >= L.
+Proof.
+  intros da db dab L HL Hden Hnum.
+  unfold law_of_cosines_arg, spherical_cosine_arg; cbv zeta.
+  set (ca := distance_to_central_angle da) in *.
+  set (cb := distance_to_central_angle db) in *.
+  set (cab := distance_to_central_angle dab) in *.
+  set (s := sin ca * sin cb) in *.
+  assert (Hs : s > 0) by lra.
+  assert (Habs : Rabs s = s) by (apply Rabs_right; lra).
+  assert (Hdn : Rmax (Rabs s) 1e-10 = s) by (rewrite Habs; apply Rmax_left; lra).
+  rewrite Hdn.
+  set (num := cos cab - cos ca * cos cb) in *.
+  assert (Hfrac : num / s >= L).
+  { apply Rle_ge. unfold Rdiv.
+    replace L with (L * s * / s) at 1 by (field; lra).
+    apply Rmult_le_compat_r; [apply Rlt_le, Rinv_0_lt_compat; exact Hs |].
+    apply Rge_le; exact Hnum. }
+  assert (Hmin : Rmin 1 (num / s) >= L).
+  { unfold Rmin. destruct (Rle_dec 1 (num / s)); lra. }
+  apply Rle_ge. apply Rle_trans with (Rmin 1 (num / s)).
+  - apply Rge_le; exact Hmin.
+  - apply Rmax_r.
+Qed.
+
+(* Upper bounds on cosine at the chosen angle caps, via cos x = 1 - 2 sin^2(x/2)
+   and the cubic sine lower bound. *)
+
+Lemma cos_1_ub : cos 1 <= 55/100.
+Proof.
+  pose proof (cos_2a_sin (1/2)) as H. replace (2 * (1/2)) with 1 in H by lra. rewrite H.
+  pose proof (sin_lower_cubic (1/2) ltac:(lra) ltac:(lra)) as Hsc.
+  assert (sin (1/2) >= 23/48) by lra. assert (sin (1/2) >= 0) by lra. nra.
+Qed.
+
+Lemma cos_13_ub : cos (13/10) <= 27/100.
+Proof.
+  pose proof (cos_2a_sin (13/20)) as H. replace (2 * (13/20)) with (13/10) in H by lra. rewrite H.
+  pose proof (sin_lower_cubic (13/20) ltac:(lra) ltac:(lra)) as Hsc.
+  assert (sin (13/20) >= 13/20 - (13/20) * (13/20) * (13/20) / 6) by lra.
+  assert (sin (13/20) >= 0) by (apply Rle_ge, sin_ge_0; [lra | pose proof one_lt_PI; lra]).
+  nra.
+Qed.
+
+Lemma cos_46_ub : cos (46/100) <= 90/100.
+Proof.
+  pose proof (cos_2a_sin (23/100)) as H. replace (2 * (23/100)) with (46/100) in H by lra. rewrite H.
+  pose proof (sin_lower_cubic (23/100) ltac:(lra) ltac:(lra)) as Hsc.
+  assert (sin (23/100) >= 23/100 - (23/100) * (23/100) * (23/100) / 6) by lra.
+  assert (sin (23/100) >= 0) by (apply Rle_ge, sin_ge_0; [lra | pose proof one_lt_PI; lra]).
+  nra.
 Qed.
 
 (* Geometric axioms for the test exterior point. Each edge, viewed from the
